@@ -82,6 +82,51 @@ git pull --rebase
 git fetch; git rebase <origin/target-branch-name>
 ```
 
+### 2.9 将其他分支的指定commit复制到当前分支下
+
+```
+git cherry-pick <commit1> <commit2> ...
+```
+
+### 2.10 撤销变更
+
+#### 2.10.1 只影响本地分支
+
+```
+git reset HEAD~1
+```
+
+> 注：上面的命令用到了相对引用
+
+#### 2.10.2 可以push更新远程分支
+
+```
+git revert HEAD
+```
+
+## 2.11 让指定分支指向某一次提交
+
+```
+git branch -f <target-branch-name> <commit-id>
+```
+
+## 2.12 退出合并
+
+```
+git merge --abort
+```
+
+## 2.13 将指定分支替换为另一个分支内容
+
+```
+# 切换到目标分支
+git checkout <target-branch-name> 
+# 将本地的目标分支重置成源分支
+git reset --hard <source-branch-name> 
+# 再推送到远程仓库
+git push origin <target-branch-name> --force 
+```
+
 ## 3. tag操作
 
 ### 3.1 对当前分支打tag
@@ -94,4 +139,35 @@ git tag <new-tag-name>
 
 ```
 git tag <new-tag-name> <commit-id>
+```
+
+### 3.3 删除tag
+
+```
+git push origin --delete tag <tag-name>
+```
+
+## 4. 相对引用
+
++ `^`: 向上移动一个commit
++ `~<num>`: 向上移动num个commit
+
+## 5. 免密设置
+
+### 5.1 记住密码
+
+```
+git config credential.helper "store --file ~/.my-credentials"
+```
+
+### 5.2 设置过期时间
+
+```
+git config credential.helper 'cache --timeout=3600'
+```
+
+### 5.3 删除免密设置
+
+```
+git credential-manager delete
 ```

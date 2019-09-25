@@ -42,9 +42,23 @@ lsof -i:<port>
 sudo yum install lsof
 ```
 
-## 4 文件传输与拷贝
+### 3.3 设置socks5代理
 
-### 4.1 scp
+```
+ssh -N -f -D *:<local-port> <remote-user>@<remote-host> > ./sshproxy_vm_test.log 2>&1
+```
+
+### 3.4 查询指定进程的连接数
+
+```
+nsenter -t <pid> -n netstat | grep ESTABLISHED
+```
+
+## 4 文件相关
+
+### 4.1 传输与拷贝
+
+#### 4.1.1 scp
 
 （1）拷贝本地文件至远程主机
 
@@ -56,6 +70,38 @@ scp <local-file> <remote-user>@<remote-host>:<remote-path>
 
 ```
 scp <remote-user>@<remote-host>:<remote-path> <local-path>
+```
+
+### 4.2 递归查找执行目录下含有指定字符串的文件
+
+```
+grep -rn "ui green button" <dir>
+```
+
+### 4.3 查找指定目录下拥有者不是root的文件
+
+```
+find <dir> -type f -uid +1000
+```
+
+### 4.4 获取指定行的日志
+
+```
+sed -n "190502, 190512p" <log-file> 
+```
+
+### 4.5 清理
+
+#### 4.5.1 清理大文件
+
+```
+cat /dev/null > <big-file>
+```
+
+#### 4.5.2 检查进程是否存在未释放的文件描述符
+
+```
+lsof | grep delete
 ```
 
 ## 5 压缩与解压
@@ -88,7 +134,43 @@ unzip ROOT.war -d ROOT
 zip -r nexus-2.14.3-02-bundle.zip nexus-2.14.3-02
 ```
 
-## 6 修改open-files
+## 6 http请求
+
+### 6.1 curl
+
+#### 6.1.1 模拟DELETE请求
+
+```
+curl -v -X DELETE 192.168.33.1:8080/girls/3
+```
+
+#### 6.1.2 设置域名请求头访问
+
+```
+curl -v -H"host: gatewaymonitor.eop.ctg.ctgae.com:8011" http://10.142.232.175:8011
+```
+
+## 7 系统设置
+
+### 7.1 调整时区
+
+```
+sudo timedatectl set-timezone 'Asia/Shanghai'
+```
+
+### 7.2 查看内核日志
+
+```
+cat -n /var/log/messages
+```
+
+### 7.3 查看linux系统版本
+
+```
+lsb_release -a
+```
+
+## 8 修改open-files
 
 （1）查看`file-max`
 
