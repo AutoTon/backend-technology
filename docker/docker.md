@@ -11,3 +11,9 @@ docker inspect -f '{{.State.Pid}}' <containerid>
 ```
 nsenter -t <pid> -n netstat | grep ESTABLISHED
 ```
+
+## 查看日志
+
+```
+docker logs --tail=<num> <container-id>
+```

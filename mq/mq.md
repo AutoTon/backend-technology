@@ -14,7 +14,7 @@
 
 ## 对比
 
-![](assets/compare.png)
+![](images/compare.png)
 
 ## 保证消费的幂等性
 

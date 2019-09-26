@@ -38,3 +38,5 @@
 + PROPAGATION_NEVER：不能在事务中执行，若存在父事务，则会抛出异常。
 + PROPAGATION_NESTED：与PROPAGATION_REQUIRES_NEW区别在于子事务跟父事务是一起提交的。
 
+
+
