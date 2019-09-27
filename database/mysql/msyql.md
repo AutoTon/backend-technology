@@ -111,3 +111,27 @@ show variables like '%max_allowed_packet%';
 set global max_allowed_packet = 2*1024*1024*10;
 set global slave_max_allowed_packet = 20*1024*1024;
 ```
+
+# 命令行
+
+## 输入带有特殊符号的密码
+
+密码用`单引号`括起来，如
+
+```
+mysql -uroot -p'root123!@#'
+```
+
+## 导入外部脚本
+
+```
+mysql -u$mysql_user -p'$mysql_password' < $work_dir/$gogs_sql_script
+```
+
+## 执行带有特殊符号的字符串变量密码
+
+```
+mysql_password=ctgae123!@#
+mysql_script="mysql -u$mysql_user -p'$mysql_password' < $work_dir/$gogs_sql_script "
+eval $mysql_script
+```
