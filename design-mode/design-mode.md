@@ -316,8 +316,6 @@ ab = (ActorBuilder)XMLUtil.getBean(); //反射生成具体建造者对象
 Director ac = new Director();
 Product actor;
 actor = ac.construct(ab);
-.0... -+
-+-
 ```
 
 ## 模板方法模式
