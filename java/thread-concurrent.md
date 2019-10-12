@@ -76,3 +76,50 @@ redis：set结构保存
 ### 分库存
 
 比如有500000个秒杀名额，分50份存储
+
+## 并发编程
+
+### 线程安全
+
+#### 线程不安全的类如何在多线程环境使用？
+
+实例封装（Java监视器模式）
+
+（1）
+
+将线程不安全的类封装到另一个对象，在对象加锁访问
+
+（2）
+
+```
+public class PersonSet {
+    
+    private final Set<Person> mySet = new HashSet<>();
+    
+    public synchronized void addPerson(Person person) {
+        mySet.add(person);
+    }
+
+    public synchronized boolean containsPerson(Person person) {
+        return mySet.contains(person);
+    }
+    
+}
+```
+
+（3）
+
+```
+public class PersonSet {
+
+    private final Object myLock = new Object();
+    Widget widget;
+
+    void someMethod() {
+        synchronized (myLock) {
+            // 访问或修改widget的状态
+        }
+    }
+
+}
+```

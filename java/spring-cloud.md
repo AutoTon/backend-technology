@@ -51,3 +51,91 @@ Eureka各个节点都是平等的，几个节点挂掉不会影响正常节点�
 + 当下游的服务因为某种原因不可用，上游主动调用本地的一些降级逻辑，避免卡顿，迅速返回给用户！
 
 > 注：服务熔断可以看成是服务降级的一种处理方式。
+
+## springboot启动慢原因追踪
+
+### 部署在普通centos机器上，发现启动速度多达300多秒？
+
+![](images/springboot-start-slow.png)
+
+重启tomcat之后，打印进程的线程栈
+
+```
+jstack -l <pid>
+```
+
+发现下面信息：
+
+```
+"main" #1 prio=5 os_prio=31 tid=0x00007fe0e1000000 nid=0x2503 runnable [0x000070000b9c3000]
+   java.lang.Thread.State: RUNNABLE
+        at java.net.Inet6AddressImpl.lookupAllHostAddr(Native Method)
+        at java.net.InetAddress$2.lookupAllHostAddr(InetAddress.java:928)
+        at java.net.InetAddress.getAddressesFromNameService(InetAddress.java:1323)
+        at java.net.InetAddress.getLocalHost(InetAddress.java:1500)
+        - locked <0x00000007403c92a0> (a java.lang.Object)
+        at sun.management.VMManagementImpl.getVmId(VMManagementImpl.java:140)
+        at sun.management.RuntimeImpl.getName(RuntimeImpl.java:59)
+```
+
+简单来说就是，spring boot启动时，有些框架或者日志组件，会直接或间接地多次调用：`java.net.InetAddress.getLocalHost()`，这个调用在某些操作系统会阻塞很久。
+
+#### 解决
+
+查看机器的`hostname`
+
+```
+cat /etc/hostname
+```
+
+将机器的`hostname`添加至`hosts`
+
+```
+vim /etc/hosts
+```
+
+举例：
+
+```
+127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4 microservice-console-0001.novalocal
+::1         localhost localhost.localdomain localhost6 localhost6.localdomain6 microservice-console-0001.novalocal
+```
+
+> 参考资料：https://www.jianshu.com/p/5e9560e05edf
+
+### 部署至docker容器时，启动非常慢？
+
+通过docker启动的springboot启动慢，启动时间共用135s
+
+![](images/springboot-docker-start-slow.png)
+
+执行
+
+```
+jinfo -flags <pid>
+```
+
+当前进程的jvm参数如下：
+
+```
+VM Flags:
+Non-default VM flags: -XX:CICompilerCount=18 -XX:CompressedClassSpaceSize=528482304 -XX:+HeapDumpOnOutOfMemoryError
+-XX:HeapDumpPath=null -XX:InitialHeapSize=268435456 -XX:MaxHeapSize=536870912 -XX:MaxMetaspaceSize=536870912 -XX:Max
+NewSize=178782208 -XX:MetaspaceSize=268435456 -XX:MinHeapDeltaBytes=524288 -XX:NewSize=89128960 -XX:OldSize=17930649
+6 -XX:ThreadStackSize=1024 -XX:+UseCompressedClassPointers -XX:+UseCompressedOops -XX:+UseFastUnorderedTimeStamps -X
+X:+UseParallelGC
+Command line:  -Xms256m -Xmx512m -Xss1024K -XX:MetaspaceSize=256m -XX:MaxMetaspaceSize=512m -XX:+HeapDumpOnOutOfMemo
+ryError -XX:HeapDumpPath=/logs
+```
+
+从`CICompilerCount`参数看，这个值比较大达到了`18`
+
+#### 解决
+
+jdk8版本无法识别cgroup的限制，所以默认用宿主机的机器配置，来生成jvm默认的参数。
+
++ （1）升级`jdk8u221`及以上版本（推荐）
++ （2）jdk8比较旧的版本，显式设置指定参数
+根据容器的cpu核数，显式设置以下参数：
+例如：容器cpu核数为2，则明确GC和JIT并行线程数目，以避免二者占用过多资源
+`-server -XX:ParallelGCThreads=2 -XX:CICompilerCount=2`
