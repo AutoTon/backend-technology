@@ -238,5 +238,230 @@ public class ReentrantLock {
 
 ### JDK线程安全类
 
+#### 同步容器
 
+`Collections.synchronizedXxx`
+
+封装底层容器，并对每个公有方法都进行同步。
+
+#### 并发容器
+
+##### ConcurrentHashMap
+
++ 分段锁机制
++ size()、isEmpty()返回值不精确
+
+###### HashMap
+
++ hash冲突>8时，将桶的链表转为红黑树，优化查询性能；
++ hash冲突<=6时，将桶的红黑树转化为链表。不设置为8是为了避免map在临界值8时频繁插入删除元素时红黑树与链表的转化。
++ 转化都在插入时进行。
+
+##### CopyOnWriteArrayList（读写分离）
+
++ 往一个容器添加元素的时候，不直接往当前容器添加，而是先将当前容器进行Copy，复制出一个新的容器，然后新的容器里添加元素，添加完元素之后，再将原容器的引用指向新的容器。
++ 允许多线程遍历，遍历过程不会抛出ConcurrentModificationException 异常，底层是生成快照，读线程对各自的快照进行遍历。
+
+###### 适用场景
+
+适用于`读多写少`的并发场景：比如`白名单`，`黑名单`，商品类目的访问和更新场景，假如我们有一个搜索网站，用户在这个网站的搜索框中，输入关键字搜索内容，但是某些关键字不允许被搜索。这些不能被搜索的关键字会被放在一个黑名单当中，黑名单每天晚上更新一次。当用户搜索时，会检查当前关键字在不在黑名单当中，如果在，则提示不能搜索。
+
+```
+public class BlackListServiceImpl {
+
+    private static CopyOnWriteMap<String, Boolean> blackListMap = new CopyOnWriteMap<String, Boolean>(1000);
+
+    public static boolean isBlackList(String id) {
+        return blackListMap.get(id) == null ? false : true;
+    }
+
+    public static void addBlackList(String id) {
+        blackListMap.put(id, Boolean.TRUE);
+    }
+    
+    /**
+     * 批量添加黑名单
+     *
+     * @param ids
+     */
+    public static void addBlackList(Map<String,Boolean> ids) {
+        
+        blackListMap.putAll(ids);
+        
+    }
+
+}
+```
+
+###### 缺点
+
++ 内存占用问题：在进行写操作的时候，内存里会同时驻扎两个对象的内存，旧的对象和新写入的对象。如果这些对象占用的内存比较大，那么有可能造成频繁的Yong GC和Full GC。
++ 数据一致性问题： 读到的数据可能已过时
+
+##### BlockQueue
+
++ 提供可阻塞的put()、take()方法，适用于生产者-消费者模式
++ `LinkedBlockingQueue`：内部使用2个可重入锁`ReentrantLock`，分别用于入队、出队。保证了同一时刻只有一个线程入队/出队。
+
+##### BlockDeque	
+
+双端队列，适用于工作密取模式，每个消费者有自己的消费队列，消费完可去获取其他消费者队尾的工作，减少了竞争。
+
+#### 同步工具类
+
+##### Lacth（闭锁）
+
+一次性对象，一旦到达终止状态，不可被重置。
+
+`CountDownLatch`
+
+```
+public long timeTasks(int nThreads, final Runnable task) throws InterruptedException {
+        final CountDownLatch startGate = new CountDownLatch(1);
+        final CountDownLatch endGate = new CountDownLatch(nThreads);
+        
+        for (int i = 0; i < nThreads; i++) {
+            Thread t = new Thread() {
+                @Override
+                public void run() {
+                    try {
+                        startGate.await();
+                        try {
+                            task.run();
+                        } finally {
+                            endGate.countDown();
+                        }
+                    } catch (InterruptedException e) {
+                        
+                    } 
+                }
+            };
+            t.start();
+        }
+        
+        long start = System.nanoTime();
+        startGate.countDown();
+        endGate.await();
+        long end = System.nanoTime();
+        return end - start;
+    }
+```
+
+##### FutureTask
+
+```
+public class Preloader {
+    private final FutureTask<ProductInfo> future = new FutureTask<ProductInfo>(new Callable<ProductInfo>() {
+        @Override
+        public ProductInfo call() throws Exception {
+            return loadProductInfo();
+        }
+    });
+    private final Thread thread = new Thread(future);
+    
+    public void start() {
+        thread.start();
+    }
+    
+    public ProductInfo get() throws InterruptedException {
+        try {
+            return future.get();
+        } catch (ExecutionException e) {
+            // ...
+        }
+    }
+            
+}
+```
+
+##### 信号量
+
+控制同时访问某个特定资源的操作数量。
+
+```
+public class BoundedHashSet<T> {
+    private final Set<T> set;
+    private final Semaphore semaphore;
+
+    public BoundedHashSet(int bound) {
+        this.set = Collections.synchronizedSet(new HashSet<T>());
+        semaphore = new Semaphore(bound);
+    }
+
+    public boolean add(T t) throws InterruptedException {
+        semaphore.acquire();
+        boolean wasAdded = false;
+        try {
+            wasAdded = set.add(t);
+            return wasAdded;
+        } finally {
+            if (!wasAdded) {
+                semaphore.release();
+            }
+        }
+    }
+    
+    public boolean remove(Object o) {
+        boolean wasRemoved = set.remove(o);
+        if (wasRemoved) {
+            semaphore.release();
+        }
+        return wasRemoved;
+    }
+}
+```
+
+##### Barrier（栅栏）
+
+阻塞一组线程直到某个事件发生。
+
+`CyclicBarrier`
+
+在释放等待线程之后可以被重用。（与LatchLock有区别）
+
+```
+public class CyclicBarrierTest {
+
+	public static void main(String[] args) throws IOException, InterruptedException {
+		//如果将参数改为4，但是下面只加入了3个选手，这永远等待下去
+		//Waits until all parties have invoked await on this barrier. 
+		CyclicBarrier barrier = new CyclicBarrier(3);
+
+		ExecutorService executor = Executors.newFixedThreadPool(3);
+		executor.submit(new Thread(new Runner(barrier, "1号选手")));
+		executor.submit(new Thread(new Runner(barrier, "2号选手")));
+		executor.submit(new Thread(new Runner(barrier, "3号选手")));
+
+		executor.shutdown();
+	}
+}
+
+class Runner implements Runnable {
+	// 一个同步辅助类，它允许一组线程互相等待，直到到达某个公共屏障点 (common barrier point)
+	private CyclicBarrier barrier;
+
+	private String name;
+
+	public Runner(CyclicBarrier barrier, String name) {
+		super();
+		this.barrier = barrier;
+		this.name = name;
+	}
+
+	@Override
+	public void run() {
+		try {
+			Thread.sleep(1000 * (new Random()).nextInt(8));
+			System.out.println(name + " 准备好了...");
+			// barrier的await方法，在所有参与者都已经在此 barrier 上调用 await 方法之前，将一直等待。
+			barrier.await();
+		} catch (InterruptedException e) {
+			e.printStackTrace();
+		} catch (BrokenBarrierException e) {
+			e.printStackTrace();
+		}
+		System.out.println(name + " 起跑！");
+	}
+}
+```
 
