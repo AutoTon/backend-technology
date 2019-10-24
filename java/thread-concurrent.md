@@ -123,3 +123,120 @@ public class PersonSet {
 
 }
 ```
+
+#### 为现有的线程安全类添加原子方法？
+
+（1）修改类的源码，以添加新的原子操作
+
+（2）集成该线程安全类，并添加原子操作
+
+```
+public class ImprovedVector<T> extends Vector<T>{  
+    public synchronized boolean putIfAbsent(T x){  
+        boolean flag=contains(x);  
+        if(!flag)  
+             add(x);  
+        return !flag;  
+    }  
+}  
+```
+
+（3）使用客户端加锁方式
+
+```
+public class ImprovedList<T>{  
+    public List<T> list=Collections.synchronizedList(new ArrayList<T>());  
+    public synchronized boolean putIfAbsent(T x){  
+            synchronized(list){  
+            boolean flag=list.contains(x);  
+            if(!flag)  
+                 list.add(x);  
+            return !flag;  
+        }  
+    }  
+}  
+```
+
+（4）使用组合方式（推荐）
+
+```
+public class ImprovedList<T> implements List<T>{  
+    private final List<T> list;  
+    public ImprovedList(List<T> list){  
+         this.list=list;  
+    }  
+    public synchronized boolean putIfAbsent(T x){  
+            boolean flag=list.contains(x);  
+            if(!flag)  
+                 list.add(x);  
+            return !flag;  
+        }  
+    }  
+    ...实现List<T>接口中的其他方法  
+}  
+```
+
+### 锁
+
+#### 不可重入锁
+
+若当前线程执行某个方法已经获取了该锁，那么在方法中尝试再次获取锁时，就会获取不到被`阻塞`。
+
+```
+public class NonReentrantLock {
+
+    private boolean isLocked = false;
+    public synchronized void lock() throws InterruptedException{
+        while(isLocked){
+            wait();
+        }
+        isLocked = true;
+    }
+    public synchronized void unlock(){
+        isLocked = false;
+        notify();
+    }
+}
+```
+
+#### 可重入锁
+
+线程可以进入它已经拥有的锁的同步代码块，有一个int型统计重入次数。
+
+```
+public class ReentrantLock {
+
+    boolean isLocked = false;
+    Thread  lockedBy = null;
+    int lockedCount = 0;
+    public synchronized void lock()
+            throws InterruptedException{
+        Thread thread = Thread.currentThread();
+        while(isLocked && lockedBy != thread){
+            wait();
+        }
+        isLocked = true;
+        lockedCount++;
+        lockedBy = thread;
+    }
+    public synchronized void unlock(){
+        if(Thread.currentThread() == this.lockedBy){
+            lockedCount--;
+            if(lockedCount == 0){
+                isLocked = false;
+                notify();
+            }
+        }
+    }
+}
+```
+
+##### 应用
+
++ synchronized
++ java.util.concurrent.locks.ReentrantLock
+
+### JDK线程安全类
+
+
+
