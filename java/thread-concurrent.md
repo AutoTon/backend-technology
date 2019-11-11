@@ -553,3 +553,77 @@ public class Singleton {
 （3）最后在内存M上初始化Singleton对象
 
 > 在java中`Long`类型是`64位`的，在`32位`的系统中，Cpu指令要进行多次操作，无法保证原子性。
+
+### Happens-before原则
+
++ 程序的顺序性规则：前面一个操作的结果对后续操作是可见的。
++ volatile变量规则：对一个volatile变量的写操作，Happens-Before于后续对这个volatile变量的读操作。
++ 传递性：如果A`Happens-Before`B，且B`Happens-Before`C，那么A`Happens-Before`C。
+
+```
+class VolatileExample {
+  int x = 0;
+  volatile boolean v = false;
+  public void writer() {
+    x = 42;
+    v = true;
+  }
+  public void reader() {
+    if (v == true) {
+      // 这里x会是多少呢？
+    }
+  }
+}
+```
+
+![](images/happens-before-example.png)
+
++ 管程中锁的规则：对一个锁的解锁`Happens-Before`于后续对这个锁的加锁。
+
+> `synchronized`是Java里对管程的实现。
+
+```
+
+synchronized (this) { //此处自动加锁
+  // x是共享变量,初始值=10
+  if (this.x < 12) {
+    this.x = 12; 
+  }  
+} //此处自动解锁
+```
+
++ 线程start()规则：指主线程A启动子线程B后，子线程B能够看到主线程在启动子线程B前的操作。
+
+```
+
+Thread B = new Thread(()->{
+  // 主线程调用B.start()之前
+  // 所有对共享变量的修改，此处皆可见
+  // 此例中，var==77
+});
+// 此处对共享变量var修改
+var = 77;
+// 主线程启动子线程
+B.start();
+```
+
++ 线程join()规则：如果在线程A中，调用线程B的join()并成功返回，那么线程B中的任意操作`Happens-Before`于该join()操作的返回。
+
+```
+
+Thread B = new Thread(()->{
+  // 此处对共享变量var修改
+  var = 66;
+});
+// 例如此处对共享变量修改，
+// 则这个修改结果对线程B可见
+// 主线程启动子线程
+B.start();
+B.join()
+// 子线程所有对共享变量的修改
+// 在主线程调用B.join()之后皆可见
+// 此例中，var==66
+```
+
+### 互斥锁
+
