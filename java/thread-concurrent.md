@@ -465,3 +465,91 @@ class Runner implements Runnable {
 }
 ```
 
+## 极客时间
+
+### 并发编程
+
++ 分工：将一个大任务拆分为多个小任务（偏业务），并交给多线程去执行（偏实现）
++ 同步：多线程间的通信
++ 互斥：保证同一时刻只有一个线程访问共享资源。常用工具为锁。
+
+### 三大问题
+
++ 可见性：CPU缓存
+
+```
+public class Test {
+
+    private long count = 0;
+
+    public long getCount() {
+        return count;
+    }
+
+    private void add10K() {
+        int idx = 0;
+        while(idx++ < 10000) {
+            count += 1;
+        }
+    }
+
+    public static long calc() throws InterruptedException {
+        final Test test = new Test();
+        // 创建两个线程，执行add()操作
+        Thread th1 = new Thread(()->{
+            test.add10K();
+        });
+        Thread th2 = new Thread(()->{
+            test.add10K();
+        });
+        // 启动两个线程
+        th1.start();
+        th2.start();
+        // 等待两个线程执行结束
+        th1.join();
+        th2.join();
+        return test.getCount();
+    }
+
+    public static void main(String[] args) throws InterruptedException {
+        long count = calc();
+        System.out.println(count);
+    }
+}
+```
+
+![](images/visible-problem.png)
+
++ 原子性：线程切换，`CPU`能保证的原子操作是`CPU指令`级别的，而不是高级语言的操作符
+
++ 有序性：编译器为了优化性能，有时候会改变程序中指令的先后顺序
+
+```
+
+public class Singleton {
+  static Singleton instance;
+  static Singleton getInstance(){
+    if (instance == null) {
+      synchronized(Singleton.class) {
+        if (instance == null)
+          instance = new Singleton();
+        }
+    }
+    return instance;
+  }
+}
+```
+
+我们以为的`new`操作应该是：
+
+（1）分配一块内存M；
+（2）在内存M上初始化Singleton对象；
+（3）然后M的地址赋值给instance变量。
+
+但是实际上优化后的执行路径却是这样的：
+
+（1）分配一块内存M；
+（2）将M的地址赋值给instance变量；
+（3）最后在内存M上初始化Singleton对象
+
+> 在java中`Long`类型是`64位`的，在`32位`的系统中，Cpu指令要进行多次操作，无法保证原子性。
