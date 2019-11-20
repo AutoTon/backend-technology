@@ -2036,3 +2036,713 @@ static class MR extends
   }
 }
 ```
+
+### 并发设计模式
+
+#### Immutability模式
+
+（1）快速实现具备不可变性的类
+
+类和属性都是`final`的，所有方法均是只读的。例如String、Integer类。
+
+（2）对于不可变的类如何提高修改的方法？
+
+解决方法是创建一个新的不可变对象。
+
+#### Copy-on-Write模式
+
+缺点：消耗内存，每次修改都需要复制一个新的对象出来。
+
+场景：适用于读多写少，数据弱一致性。
+
+```
+//路由信息
+public final class Router{
+  private final String  ip;
+  private final Integer port;
+  private final String  iface;
+  //构造函数
+  public Router(String ip, 
+      Integer port, String iface){
+    this.ip = ip;
+    this.port = port;
+    this.iface = iface;
+  }
+  //重写equals方法
+  public boolean equals(Object obj){
+    if (obj instanceof Router) {
+      Router r = (Router)obj;
+      return iface.equals(r.iface) &&
+             ip.equals(r.ip) &&
+             port.equals(r.port);
+    }
+    return false;
+  }
+  public int hashCode() {
+    //省略hashCode相关代码
+  }
+}
+//路由表信息
+public class RouterTable {
+  //Key:接口名
+  //Value:路由集合
+  ConcurrentHashMap<String, CopyOnWriteArraySet<Router>> 
+    rt = new ConcurrentHashMap<>();
+  //根据接口名获取路由表
+  public Set<Router> get(String iface){
+    return rt.get(iface);
+  }
+  //删除路由
+  public void remove(Router router) {
+    Set<Router> set=rt.get(router.iface);
+    if (set != null) {
+      set.remove(router);
+    }
+  }
+  //增加路由
+  public void add(Router router) {
+    Set<Router> set = rt.computeIfAbsent(
+      route.iface, r -> 
+        new CopyOnWriteArraySet<>());
+    set.add(router);
+  }
+}
+```
+
+#### 线程本地存储模式
+
+本质上是一种避免共享的方案。
+
+```
+class Thread {
+  //内部持有ThreadLocalMap
+  ThreadLocal.ThreadLocalMap 
+    threadLocals;
+}
+class ThreadLocal<T>{
+  public T get() {
+    //首先获取线程持有的
+    //ThreadLocalMap
+    ThreadLocalMap map =
+      Thread.currentThread()
+        .threadLocals;
+    //在ThreadLocalMap中
+    //查找变量
+    Entry e = 
+      map.getEntry(this);
+    return e.value;  
+  }
+  static class ThreadLocalMap{
+    //内部是数组而不是Map
+    Entry[] table;
+    //根据ThreadLocal查找Entry
+    Entry getEntry(ThreadLocal key){
+      //省略查找逻辑
+    }
+    //Entry定义
+    static class Entry extends
+    WeakReference<ThreadLocal>{
+      Object value;
+    }
+  }
+}
+```
+
+#### Guarded Suspension模式
+
+可用于异步转同步。
+
+```
+class GuardedObject<T>{
+  //受保护的对象
+  T obj;
+  final Lock lock = 
+    new ReentrantLock();
+  final Condition done =
+    lock.newCondition();
+  final int timeout=1;
+  //获取受保护对象  
+  T get(Predicate<T> p) {
+    lock.lock();
+    try {
+      //MESA管程推荐写法
+      while(!p.test(obj)){
+        done.await(timeout, 
+          TimeUnit.SECONDS);
+      }
+    }catch(InterruptedException e){
+      throw new RuntimeException(e);
+    }finally{
+      lock.unlock();
+    }
+    //返回非空的受保护对象
+    return obj;
+  }
+  //事件通知方法
+  void onChanged(T obj) {
+    lock.lock();
+    try {
+      this.obj = obj;
+      done.signalAll();
+    } finally {
+      lock.unlock();
+    }
+  }
+}
+```
+
+```
+class GuardedObject<T>{
+  //受保护的对象
+  T obj;
+  final Lock lock = 
+    new ReentrantLock();
+  final Condition done =
+    lock.newCondition();
+  final int timeout=2;
+  //保存所有GuardedObject
+  final static Map<Object, GuardedObject> 
+  gos=new ConcurrentHashMap<>();
+  //静态方法创建GuardedObject
+  static <K> GuardedObject 
+      create(K key){
+    GuardedObject go=new GuardedObject();
+    gos.put(key, go);
+    return go;
+  }
+  static <K, T> void 
+      fireEvent(K key, T obj){
+    GuardedObject go=gos.remove(key);
+    if (go != null){
+      go.onChanged(obj);
+    }
+  }
+  //获取受保护对象  
+  T get(Predicate<T> p) {
+    lock.lock();
+    try {
+      //MESA管程推荐写法
+      while(!p.test(obj)){
+        done.await(timeout, 
+          TimeUnit.SECONDS);
+      }
+    }catch(InterruptedException e){
+      throw new RuntimeException(e);
+    }finally{
+      lock.unlock();
+    }
+    //返回非空的受保护对象
+    return obj;
+  }
+  //事件通知方法
+  void onChanged(T obj) {
+    lock.lock();
+    try {
+      this.obj = obj;
+      done.signalAll();
+    } finally {
+      lock.unlock();
+    }
+  }
+}
+```
+
+#### Balking模式
+
+##### synchronized实现
+
+```
+boolean changed=false;
+//自动存盘操作
+void autoSave(){
+  synchronized(this){
+    if (!changed) {
+      return;
+    }
+    changed = false;
+  }
+  //执行存盘操作
+  //省略且实现
+  this.execSave();
+}
+//编辑操作
+void edit(){
+  //省略编辑逻辑
+  ......
+  change();
+}
+//改变状态
+void change(){
+  synchronized(this){
+    changed = true;
+  }
+}
+```
+
+##### volatile实现
+
+不具备原子性。
+
+```
+//路由表信息
+public class RouterTable {
+  //Key:接口名
+  //Value:路由集合
+  ConcurrentHashMap<String, CopyOnWriteArraySet<Router>> 
+    rt = new ConcurrentHashMap<>();    
+  //路由表是否发生变化
+  volatile boolean changed;
+  //将路由表写入本地文件的线程池
+  ScheduledExecutorService ses=
+    Executors.newSingleThreadScheduledExecutor();
+  //启动定时任务
+  //将变更后的路由表写入本地文件
+  public void startLocalSaver(){
+    ses.scheduleWithFixedDelay(()->{
+      autoSave();
+    }, 1, 1, MINUTES);
+  }
+  //保存路由表到本地文件
+  void autoSave() {
+    if (!changed) {
+      return;
+    }
+    changed = false;
+    //将路由表写入本地文件
+    //省略其方法实现
+    this.save2Local();
+  }
+  //删除路由
+  public void remove(Router router) {
+    Set<Router> set=rt.get(router.iface);
+    if (set != null) {
+      set.remove(router);
+      //路由表已发生变化
+      changed = true;
+    }
+  }
+  //增加路由
+  public void add(Router router) {
+    Set<Router> set = rt.computeIfAbsent(
+      route.iface, r -> 
+        new CopyOnWriteArraySet<>());
+    set.add(router);
+    //路由表已发生变化
+    changed = true;
+  }
+}
+```
+
+##### 单次初始化
+
+```
+class InitTest{
+  boolean inited = false;
+  synchronized void init(){
+    if(inited){
+      return;
+    }
+    //省略doInit的实现
+    doInit();
+    inited=true;
+  }
+}
+```
+
+##### 单例模式实现
+
+```
+class Singleton{
+  private static volatile 
+    Singleton singleton;
+  //构造方法私有化  
+  private Singleton() {}
+  //获取实例（单例）
+  public static Singleton 
+  getInstance() {
+    //第一次检查
+    if(singleton==null){
+      synchronize{Singleton.class){
+        //获取锁后二次检查
+        if(singleton==null){
+          singleton=new Singleton();
+        }
+      }
+    }
+    return singleton;
+  }
+}
+```
+
+#### Thread-Per-Message模式
+
+解决宏观的分工问题。为每个任务分配一个独立的线程。
+
+应用场景：网络编程里服务端的实现。
+
+```
+final ServerSocketChannel ssc = 
+  ServerSocketChannel.open().bind(
+    new InetSocketAddress(8080));
+//处理请求    
+try {
+  while (true) {
+    // 接收请求
+    SocketChannel sc = ssc.accept();
+    // 每个请求都创建一个线程
+    new Thread(()->{
+      try {
+        // 读Socket
+        ByteBuffer rb = ByteBuffer
+          .allocateDirect(1024);
+        sc.read(rb);
+        //模拟处理请求
+        Thread.sleep(2000);
+        // 写Socket
+        ByteBuffer wb = 
+          (ByteBuffer)rb.flip();
+        sc.write(wb);
+        // 关闭Socket
+        sc.close();
+      }catch(Exception e){
+        throw new UncheckedIOException(e);
+      }
+    }).start();
+  }
+} finally {
+  ssc.close();
+}   
+```
+
+#### Worker Thread模式
+
+```
+ExecutorService es = Executors
+  .newFixedThreadPool(500);
+final ServerSocketChannel ssc = 
+  ServerSocketChannel.open().bind(
+    new InetSocketAddress(8080));
+//处理请求    
+try {
+  while (true) {
+    // 接收请求
+    SocketChannel sc = ssc.accept();
+    // 将请求处理任务提交给线程池
+    es.execute(()->{
+      try {
+        // 读Socket
+        ByteBuffer rb = ByteBuffer
+          .allocateDirect(1024);
+        sc.read(rb);
+        //模拟处理请求
+        Thread.sleep(2000);
+        // 写Socket
+        ByteBuffer wb = 
+          (ByteBuffer)rb.flip();
+        sc.write(wb);
+        // 关闭Socket
+        sc.close();
+      }catch(Exception e){
+        throw new UncheckedIOException(e);
+      }
+    });
+  }
+} finally {
+  ssc.close();
+  es.shutdown();
+}   
+```
+
+```
+ExecutorService es = new ThreadPoolExecutor(
+  50, 500,
+  60L, TimeUnit.SECONDS,
+  //注意要创建有界队列
+  new LinkedBlockingQueue<Runnable>(2000),
+  //建议根据业务需求实现ThreadFactory
+  r->{
+    return new Thread(r, "echo-"+ r.hashCode());
+  },
+  //建议根据业务需求实现RejectedExecutionHandler
+  new ThreadPoolExecutor.CallerRunsPolicy());
+```
+
+> 注：提交到相同线程池中的任务一定是相互独立的。
+
+#### 两阶段终止模式
+
+![](images/two-stage-end-model.png)
+
+将终止过程分成两个阶段，其中第一个阶段主要是线程T1向线程T2发送终止指令，而第二阶段则是线程T2响应终止指令。
+
+![](images/java-thread-state-transfer.png)
+
+Java线程进入终止状态的前提是线程进入RUNNABLE状态。Java Thread类提供的interrupt()方法，它可以将休眠状态的线程转换到RUNNABLE状态。
+
+优雅的方式是让Java线程自己执行完run()方法，所以一般我们采用的方法是设置一个标志位，然后线程会在合适的时机检查这个标志位，如果发现符合终止条件，则自动退出run()方法。
+
+```
+class Proxy {
+  boolean started = false;
+  //采集线程
+  Thread rptThread;
+  //启动采集功能
+  synchronized void start(){
+    //不允许同时启动多个采集线程
+    if (started) {
+      return;
+    }
+    started = true;
+    rptThread = new Thread(()->{
+      while (!Thread.currentThread().isInterrupted()){
+        //省略采集、回传实现
+        report();
+        //每隔两秒钟采集、回传一次数据
+        try {
+          Thread.sleep(2000);
+        } catch (InterruptedException e){
+          //重新设置线程中断状态
+          Thread.currentThread().interrupt();
+        }
+      }
+      //执行到此处说明线程马上终止
+      started = false;
+    });
+    rptThread.start();
+  }
+  //终止采集功能
+  synchronized void stop(){
+    rptThread.interrupt();
+  }
+}
+```
+
+设置自己的线程终止标志位，避免第三方库没有正确的处理中断。
+
+```
+class Proxy {
+  //线程终止标志位
+  volatile boolean terminated = false;
+  boolean started = false;
+  //采集线程
+  Thread rptThread;
+  //启动采集功能
+  synchronized void start(){
+    //不允许同时启动多个采集线程
+    if (started) {
+      return;
+    }
+    started = true;
+    terminated = false;
+    rptThread = new Thread(()->{
+      while (!terminated){
+        //省略采集、回传实现
+        report();
+        //每隔两秒钟采集、回传一次数据
+        try {
+          Thread.sleep(2000);
+        } catch (InterruptedException e){
+          //重新设置线程中断状态
+          Thread.currentThread().interrupt();
+        }
+      }
+      //执行到此处说明线程马上终止
+      started = false;
+    });
+    rptThread.start();
+  }
+  //终止采集功能
+  synchronized void stop(){
+    //设置中断标志位
+    terminated = true;
+    //中断线程rptThread
+    rptThread.interrupt();
+  }
+}
+```
+
+##### 线程池的终止
+
++ shutdown()：拒绝接收新的任务，但是会等待线程池中正在执行的任务和已经进入阻塞队列的任务都执行完之后才最终关闭线程池。
++ shutdownNow()：会拒绝接收新的任务，同时还会中断线程池中正在执行的任务，已经进入阻塞队列的任务也被剥夺了执行的机会，不过这些被剥夺执行机会的任务会作为 shutdownNow() 方法的返回值返回。
+
+##### 毒丸
+
+“毒丸”对象是生产者生产的一条特殊任务，然后当消费者线程读到“毒丸”对象时，会立即终止自身的执行。
+
+```
+class Logger {
+  //用于终止日志执行的“毒丸”
+  final LogMsg poisonPill = 
+    new LogMsg(LEVEL.ERROR, "");
+  //任务队列  
+  final BlockingQueue<LogMsg> bq
+    = new BlockingQueue<>();
+  //只需要一个线程写日志
+  ExecutorService es = 
+    Executors.newFixedThreadPool(1);
+  //启动写日志线程
+  void start(){
+    File file=File.createTempFile(
+      "foo", ".log");
+    final FileWriter writer=
+      new FileWriter(file);
+    this.es.execute(()->{
+      try {
+        while (true) {
+          LogMsg log = bq.poll(
+            5, TimeUnit.SECONDS);
+          //如果是“毒丸”，终止执行  
+          if(poisonPill.equals(logMsg)){
+            break;
+          }  
+          //省略执行逻辑
+        }
+      } catch(Exception e){
+      } finally {
+        try {
+          writer.flush();
+          writer.close();
+        }catch(IOException e){}
+      }
+    });  
+  }
+  //终止写日志线程
+  public void stop() {
+    //将“毒丸”对象加入阻塞队列
+    bq.add(poisonPill);
+    es.shutdown();
+  }
+}
+```
+
+#### 生产者-消费者模式
+
+![](images/producer-consumer-model.png)
+
+应用场景：线程池。
+
+优点：解耦，支持异步，平衡生产者和消费者的速度差异。
+
+```
+//任务队列
+BlockingQueue<Task> bq=new
+  LinkedBlockingQueue<>(2000);
+//启动5个消费者线程
+//执行批量任务  
+void start() {
+  ExecutorService es=executors
+    .newFixedThreadPool(5);
+  for (int i=0; i<5; i++) {
+    es.execute(()->{
+      try {
+        while (true) {
+          //获取批量任务
+          List<Task> ts=pollTasks();
+          //执行批量任务
+          execTasks(ts);
+        }
+      } catch (Exception e) {
+        e.printStackTrace();
+      }
+    });
+  }
+}
+//从任务队列中获取批量任务
+List<Task> pollTasks() 
+    throws InterruptedException{
+  List<Task> ts=new LinkedList<>();
+  //阻塞式获取一条任务
+  Task t = bq.take();
+  while (t != null) {
+    ts.add(t);
+    //非阻塞式获取一条任务
+    t = bq.poll();
+  }
+  return ts;
+}
+//批量执行任务
+execTasks(List<Task> ts) {
+  //省略具体代码无数
+}
+```
+
+```
+
+class Logger {
+  //任务队列  
+  final BlockingQueue<LogMsg> bq
+    = new BlockingQueue<>();
+  //flush批量  
+  static final int batchSize=500;
+  //只需要一个线程写日志
+  ExecutorService es = 
+    Executors.newFixedThreadPool(1);
+  //启动写日志线程
+  void start(){
+    File file=File.createTempFile(
+      "foo", ".log");
+    final FileWriter writer=
+      new FileWriter(file);
+    this.es.execute(()->{
+      try {
+        //未刷盘日志数量
+        int curIdx = 0;
+        long preFT=System.currentTimeMillis();
+        while (true) {
+          LogMsg log = bq.poll(
+            5, TimeUnit.SECONDS);
+          //写日志
+          if (log != null) {
+            writer.write(log.toString());
+            ++curIdx;
+          }
+          //如果不存在未刷盘数据，则无需刷盘
+          if (curIdx <= 0) {
+            continue;
+          }
+          //根据规则刷盘
+          if (log!=null && log.level==LEVEL.ERROR ||
+              curIdx == batchSize ||
+              System.currentTimeMillis()-preFT>5000){
+            writer.flush();
+            curIdx = 0;
+            preFT=System.currentTimeMillis();
+          }
+        }
+      }catch(Exception e){
+        e.printStackTrace();
+      } finally {
+        try {
+          writer.flush();
+          writer.close();
+        }catch(IOException e){
+          e.printStackTrace();
+        }
+      }
+    });  
+  }
+  //写INFO级别日志
+  void info(String msg) {
+    bq.put(new LogMsg(
+      LEVEL.INFO, msg));
+  }
+  //写ERROR级别日志
+  void error(String msg) {
+    bq.put(new LogMsg(
+      LEVEL.ERROR, msg));
+  }
+}
+//日志级别
+enum LEVEL {
+  INFO, ERROR
+}
+class LogMsg {
+  LEVEL level;
+  String msg;
+  //省略构造函数实现
+  LogMsg(LEVEL lvl, String msg){}
+  //省略toString()实现
+  String toString(){}
+}
+```
