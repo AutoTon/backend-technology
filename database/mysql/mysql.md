@@ -6,6 +6,94 @@
 + 客户端的消息传送有大小限制，参数max_allowed_packet
 + 一旦服务端向客户端返回消息，可能会拆分成多个数据包，客户端就必须要等待完整接收完毕。因此有时加上limit限时提取的数据是有必要的。
 
+## 查询语句的执行
+
+![](images/query-sql-workflow.png)
+
+## 查询缓存
+
+不建议开启。可通过下面命令查询是否开启
+
+```
+show global VARIABLES like 'query_cache_type';
+```
+
+## 日志模块
+
+### redo log（InnoDB引擎特有的日志）
+
+![](images/redo-log-workflow.png)
+
+循环写，空间固定会用完。
+
++ write pos：记录当前写的位置
++ check point：记录当前擦除的位置
+
+> `write pos`和`checkpoint`之间可以用来记录新的操作。如果`write pos`追上`checkpoint`，这时候不能再执行新的更新，得停下来先擦掉一些记录，把`checkpoint`推进一下。
+
+#### 参数
+
+```
+show global VARIABLES like 'innodb_flush_log_at_trx_commit';
+```
+
+`innodb_flush_log_at_trx_commit`设置为1表示每次事务的`redo log`都直接持久化到磁盘。建议设置为1。
+
+### binlog（Server层日志）
+
+追加写，记录的是语句的原始逻辑。通过`事务ID`可以与`redo log`对应。
+
+#### 参数
+
+```
+show global VARIABLES like 'sync_binlog';
+```
+
+`sync_binlog`设置为1表示每次事务的`binlog`都持久化到磁盘。建议设置为1。
+
+## 更新语句的执行
+
+两阶段提交，避免任意时刻crash造成的binlog与redo log的数据不一致。
+
+![](images/update-sql-workflow.png)
+
+## 事务隔离
+
++ 读未提交（read uncommitted）：一个事务还没提交时，它做的变更就能被别的事务看到。
++ 读提交（read committed）：一个事务提交之后，它做的变更才会被其他事务看到。
++ 可重复读（repeatable read）：一个事务执行过程中看到的数据，总是跟这个事务在启动时看到的数据是一致的。当然在可重复读隔离级别下，未提交变更对其他事务也是不可见的。
++ 串行化（serializable）：顾名思义是对于同一行记录，“写”会加“写锁”，“读”会加“读锁”。当出现读写锁冲突的时候，后访问的事务必须等前一个事务执行完成，才能继续执行。
+
+查看当前的事务隔离级别：
+
+```
+show variables like 'transaction_isolation';
+```
+
+查询当前超过60秒的长事务：
+
+```
+select * from information_schema.innodb_trx where TIME_TO_SEC(timediff(now(),trx_started))>60
+```
+
+## 索引
+
+主键长度越小，普通索引的叶子节点就越小，普通索引占用的空间也就越小。
+
+下面的语句可以重建索引。应用于删除记录不会删除对应的索引。
+
+```
+alter table T engine=InnoDB;
+```
+
+### 主键索引（聚簇索引）
+
+叶子节点存的是整行数据。
+
+### 非主键索引（二级索引）
+
+叶子节点内容是主键的值。基于非主键索引的查询需要多扫描一棵索引树。
+
 # mysql开发篇
 
 ## 数据类型
