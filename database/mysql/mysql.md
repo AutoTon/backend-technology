@@ -94,6 +94,106 @@ alter table T engine=InnoDB;
 
 叶子节点内容是主键的值。基于非主键索引的查询需要多扫描一棵索引树。
 
+### 唯一索引与普通索引的选择
+
+`唯一索引`用不上`change buffer`的优化机制，因此从性能角度建议优先考虑`非唯一索引`。
+
+若写入的数据不在内存，对于唯一索引需要把数据页从磁盘读入内存；对于普通索引只需要将数据写入`change buffer`，减少了随机磁盘访问。
+
+如果所有的更新后面，都马上伴随着对这个记录的查询，那么应该关闭`change buffer`。
+
+### 如何给字符串建立索引
+
+使用前缀索引，定义好长度，就可以做到既节省空间，又不用额外增加太多的查询成本。
+
+```
+select 
+  count(distinct email) as L, 
+  count(distinct left(email,4)）as L4,
+  count(distinct left(email,5)）as L5,
+  count(distinct left(email,6)）as L6,
+  count(distinct left(email,7)）as L7,
+from SUser;
+```
+
+预先设定一个可以接受的损失比例，比如5%。然后，在返回的L4~L7中，找出不小于L*95%的值，假设这里L6、L7都满足，你就可以选择前缀长度为6。
+
+#### 考虑前缀容易重复的场景
+
+##### 倒序存储
+
+```
+select field_list from t where id_card = reverse('input_id_card_string');
+```
+
+##### 额外添加hash字段
+
+```
+alter table t add id_card_crc int unsigned, add index(id_card_crc);
+```
+
+## 锁
+
+### 全局锁
+
+加全局读锁：
+
+```
+Flush tables with read lock;
+```
+
+适用于不支持事务的引擎的`做全库逻辑备份`。
+
+对于事务引擎，可使用`mysqldump`带上参数`–single-transaction`。原理是启动时会开启一个事务，类似RR，拿到一个一致性视图。
+
+### 表级锁
+
+#### 表锁
+
+```
+lock tables T read/write;
+```
+
+#### 元数据锁（MDL）
+
+读写锁之间互斥，写锁之间互斥，由系统默认在增删查改的时候自动加上。
+
+##### 如何安全地给小表加字段？
+
++ 可以查到当前执行中的事务。如果你要做DDL变更的表刚好有长事务在执行，要考虑先暂停DDL，或者kill掉这个长事务。
++ 若变更的表是一个热点表，请求很频繁，在`alter table`语句里面设定等待时间。若超时再通过重试命令重复这个过程。
+
+MariaDB、AliDB支持下面命令:
+
+```
+ALTER TABLE tbl_name NOWAIT add column ...
+ALTER TABLE tbl_name WAIT N add column ... 
+```
+
+### 行锁
+
+#### 两阶段锁协议
+
+在InnoDB事务中，行锁是在需要的时候才加上的，但并不是不需要了就立刻释放，而是要等到事务结束时才释放。
+
+#### 死锁
+
+![](images/dead-lock-demo.png)
+
++ innodb_lock_wait_timeout：锁定超时时间，默认为50s
++ innodb_deadlock_detect：开启死锁检测，若发现死锁，主动回滚其中一个事务。死锁检测要耗费大量的CPU资源。
+
+### 与事务隔离的结合
+
+一个数据版本，对于一个`事务视图`来说，
+
++ 自己的更新总是可见；
++ 版本未提交，不可见；
++ 版本已提交，但是是在视图创建后提交的，不可见；
++ 版本已提交，而且是在视图创建前提交的，可见。
+
+> 事务更新数据的时候，只能用当前读。如果当前的记录的行锁被其他事务占用的话，就需要进入锁等待。
+
 # mysql开发篇
 
 ## 数据类型
@@ -222,6 +322,31 @@ mysql -u$mysql_user -p'$mysql_password' < $work_dir/$gogs_sql_script
 mysql_password=ctgae123!@#
 mysql_script="mysql -u$mysql_user -p'$mysql_password' < $work_dir/$gogs_sql_script "
 eval $mysql_script
+```
+
+## 用navicat连接数据库缓慢
+
+原因：MySQL数据库收到一个网络连接后，首先拿到对方的IP地址，然后对这个IP地址进行反向DNS解析从而得到这个IP地址对应的主机名。用主机名在权限系统里面进行权限判断。反向DNS解析是耗费时间的，有可能让用户感觉起来很慢。甚至有的时候，反向解析出来的主机名并没有指向这个IP地址，这时候就无法连接成功了。
+
+如果由于DNS反查导致登陆很慢，那么在MySQL服务器上使用`show processlist`会看到类似如下连接：
+
+```
+123 |592|unauthenticated user|192.168.3.20:35320|NULL|Connect| |login|NULL| 
+|593|unauthenticated user|192.168.3.20:35321|NULL|Connect| |login|NULL| 
+|594|unauthenticated user|192.168.3.20:35322|NULL|Connect| |login|NULL|
+```
+
+修改`/etc/my.cnf`文件，追加下面内容:
+
+```
+[mysqld] 
+skip_name_resolve
+```
+
+重启mysql服务
+
+```
+sudo service mysqld restart
 ```
 
 # mysql安装篇
