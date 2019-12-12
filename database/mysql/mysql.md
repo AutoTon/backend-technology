@@ -51,6 +51,19 @@ show global VARIABLES like 'sync_binlog';
 
 `sync_binlog`设置为1表示每次事务的`binlog`都持久化到磁盘。建议设置为1。
 
+#### MySQL如何判断binlog是完整的
+
+一个事务的 binlog 是有完整格式的：
++ statement格式的binlog：最后会有`COMMIT`；
++ row格式的 binlog：最后会有一个`XID event`。
+
+### redo log和binlog的关联
+
+有一个共同的数据字段，叫`XID`。崩溃恢复的时候，会按顺序扫描`redo log`：
+
++ 如果碰到既有`prepare`、又有`commit`的`redo log`，就直接提交；
++ 如果碰到只有`prepare`、而没有`commit`的`redo log`，就拿着`XID`去`binlog`找对应的事务。
+
 ## 更新语句的执行
 
 两阶段提交，避免任意时刻crash造成的binlog与redo log的数据不一致。
@@ -193,6 +206,102 @@ ALTER TABLE tbl_name WAIT N add column ...
 + 版本已提交，而且是在视图创建前提交的，可见。
 
 > 事务更新数据的时候，只能用当前读。如果当前的记录的行锁被其他事务占用的话，就需要进入锁等待。
+
+## 内存数据页
+
+当内存数据页跟磁盘数据页内容不一致的时候，我们称这个内存页为“脏页”。内存数据写入到磁盘后，内存和磁盘上的数据页的内容就一致了，称为“干净页”。
+
+### 刷脏页场景
+
++ InnoDB的`redo log`写满了。
++ 系统内存不足。当需要新的内存页，而内存不够用的时候，就要淘汰一些数据页，空出内存给别的数据页使用。如果淘汰的是“脏页”，就要先将脏页写到磁盘。
++ 系统`空闲`的时候。
++ MySQL正常关闭的情况。
+
+### 刷脏页影响性能场景
+
++ 一个查询要淘汰的脏页个数太多，会导致查询的响应时间明显变长；
++ `redo log`日志写满，更新全部堵住，写性能跌为0，这种情况对敏感业务来说，是不能接受的。
+
+### 调优参数
+
+#### innodb_io_capacity
+
+磁盘能力，建议设置为磁盘的IOPS，可以通过`fio`这个工具来测试：
+
+```
+ fio -filename=$filename -direct=1 -iodepth 1 -thread -rw=randrw -ioengine=psync -bs=16k -size=500M -numjobs=10 -runtime=10 -group_reporting -name=mytest 
+```
+
+#### innodb_max_dirty_pages_pct
+
+脏页比例上限，默认是75%。
+
+#### 计算脏页比例
+
+```
+select VARIABLE_VALUE into @a from performance.global_status where VARIABLE_NAME = 'Innodb_buffer_pool_pages_dirty';
+select VARIABLE_VALUE into @b from performance.global_status where VARIABLE_NAME = 'Innodb_buffer_pool_pages_total';
+select @a/@b;
+``` 
+
+#### innodb_flush_neighbors
+
+值为1的时候会将邻近的数据脏页一起刷盘，“连坐”机制，值为0时表示不找邻居，自己刷自己的。
+
+> SSD这类IOPS比较高的设备建议设置为0。
+
+## 表数据存储
+
+`delete`命令只是把记录的位置，或者数据页标记为了“可复用”，但磁盘文件的大小是不会变的。也就是说，通过`delete`命令是不能回收表空间的。
+
+### innodb_file_per_table
+
++ 这个参数设置为`OFF`表示的是，表的数据放在系统共享表空间，也就是跟数据字典放在一起；
++ 这个参数设置为`ON`表示的是，每个InnoDB表数据存储在一个以`.ibd`为后缀的文件中。（推荐）
+
+### 重建表
+
+```
+alter table A engine=InnoDB;
+```
+
+流程如下：
+
++ 建立一个临时文件，扫描表A主键的所有数据页；
++ 用数据页中表A的记录生成`B+`树，存储到临时文件中；
++ 生成临时文件的过程中，将所有对表A的操作记录在一个日志文件（row log）中，对应的是图中`state2`的状态；
++ 临时文件生成后，将日志文件中的操作应用到临时文件，得到一个逻辑数据上与表A相同的数据文件，对应的就是图中`state3`的状态；
++ 用临时文件替换表A的数据文件。
+
+![](images/alter-table-workflow.png)
+
+## 统计行数
+
+count(字段)<count(主键)<count(1)≈count(*)
+
++ COUNT(主键)：InnoDB引擎会遍历整张表，把每一行的id值都取出来，返回给server层。server层拿到id后，判断是不可能为空的，就按行累加。
++ COUNT(字段)：如果字段是定义`为not null`的话，一行行地从记录里面读出这个字段，判断不能为null，按行累加；如果字段定义允许为null，那么执行的时候，判断到有可能是null，还要把值取出来再判断一下，不是null才累加。
++ COUNT(1)：InnoDB引擎遍历整张表，但不取值。server层对于返回的每一行，放一个数字1进去，判断是不可能为空的，按行累加。
++ COUNT(*)：MYSQL专门做了优化，按行累加。
+
+## 排序`order by`
+
+MySQL会给每个线程分配一块内存用于排序，称为`sort_buffer`。
+
+参数`sort_buffer_size`定义了为排序开辟的内存大小。如果要排序的数据量小于`sort_buffer_size`，排序就在内存中完成。但如果排序数据量太大，内存放不下，则不得不利用磁盘临时文件辅助排序。外部排序一般使用归并排序算法。将多个小文件合并成一个有序的大文件。
+
+参数`max_length_for_sort_data`定义了排序的单行最大长度。
+
+### 全字段排序
+
+![](images/all-rows-sort-demo.png)
+
+### rowid排序
+
+应用于`排序的单行长度太大`的场景。
+
+![](images/rowid-sort-demo.png)
 
 # mysql开发篇
 
