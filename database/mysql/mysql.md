@@ -80,7 +80,10 @@ show global VARIABLES like 'sync_binlog';
 查看当前的事务隔离级别：
 
 ```
+# 5.7.x
 show variables like 'transaction_isolation';
+# 5.6.x
+show variables like 'tx_isolation';
 ```
 
 查询当前超过60秒的长事务：
