@@ -201,3 +201,31 @@ sudo gpasswd -a ctgae docker
 su root # 先切换到root用户, 再执行以下命令
 systemctl enable docker # 开机自动启动docker
 ```
+
+### windows7安装Docker ToolBox
+
+下载 [阿里云镜像](http://mirrors.aliyun.com/docker-toolbox/windows/docker-toolbox/)
+
+安装后启动`Docker Quickstart Terminal`，可能需要去下载最新的[boot2docker](https://github.com/boot2docker/boot2docker/releases)，下载成功之后，将iso文件复制到`C:\Users\jirt\.docker\machine\cache`，然后再重新启动`Docker Quickstart Terminal`。
+
+#### 设置HTTP访问镜像仓库
+
+通过shell登录到docker虚机，编辑docker配置文件
+
+```
+sudo chmod +w /var/lib/boot2docker/profile
+sudo vi /var/lib/boot2docker/profile
+```
+
+找到`EXTRA_ARGS`，输入：
+
+```
+--insecure-registry=ip:port
+```
+
+重启docker：
+
+```
+sudo systemctl restart docker
+```
+
