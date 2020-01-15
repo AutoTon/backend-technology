@@ -371,3 +371,42 @@ int binarysearch(int array[], int low, int high, int target) {
     return mid;
 }
 ```
+
+## 算法题目
+
+### 1000个无序的元素，最快的算法找出最大的10个元素
+
+堆排序 > 冒泡排序 > 快速排序
+
+### 循环递增数组，最快找出最小的元素
+
+二分查找法。
+
+```
+public static  int findMin(int[] num, int begin, int end){
+		
+	 //当数组只有一个元素时，num[begin] == num[end] 直接返回
+	 //当数组第一位小于最后一位时，第一位即为最小，因为数组循环递增 
+	 if(num[begin] <= num[end]){
+		 return num[begin];
+	 }
+	 //数组只有两位时，例如2,1这时候直接范围最后一位,如果是1,2则上边的If语句已经做出判断，这里不用考虑
+	 if(end - begin == 1){
+		 return num[end];
+	 }
+	 //算出中间位
+	 int middle = (begin + end) / 2;
+	 //如果中间位小于左边的，那么中间位便是最小值，因为数组循环递增
+	 if(num[middle] < num[middle - 1]){
+		 return num[middle];
+	 }
+	 //当中间位小于第一位时，中间位左边为严格递增，右边为循环递增，最小值一定在循环递增处
+	 //反之，左边为循环递增，最小值一定在循环递增处
+	 if(num[middle] > num[begin]){
+		 return findMin(num,middle+1,end); 
+	 }else{
+		 return findMin(num,begin, middle-1);
+	 }
+		
+}
+```
