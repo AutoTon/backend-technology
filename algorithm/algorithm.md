@@ -1,3 +1,113 @@
+# 栈
+
+```
+public class Stack {
+
+    public Node head;
+    public Node current;
+
+    //方法：入栈操作
+    public void push(int data) {
+        if (head == null) {
+            head = new Node(data);
+            current = head;
+        } else {
+            Node node = new Node(data);
+            node.pre = current;//current结点将作为当前结点的前驱结点
+            current = node;    //让current结点永远指向新添加的那个结点
+        }
+    }
+
+    public Node pop() {
+        if (current == null) {
+            return null;
+        }
+
+        Node node = current; // current结点是我们要出栈的结点
+        current = current.pre;  //每出栈一个结点后，current后退一位
+        return node;
+
+    }
+
+    class Node {
+        int data;
+        Node pre;  //我们需要知道当前结点的前一个结点
+
+        public Node(int data) {
+            this.data = data;
+        }
+    }
+
+    public static void main(String[] args) {
+
+        Stack stack = new Stack();
+        stack.push(1);
+        stack.push(2);
+        stack.push(3);
+
+        System.out.println(stack.pop().data);
+        System.out.println(stack.pop().data);
+        System.out.println(stack.pop().data);
+    }
+}
+```
+
+# 队列
+
+```
+public class Queue {
+    public Node head;
+    public Node curent;
+
+    //方法：链表中添加结点
+    public void add(int data) {
+        if (head == null) {
+            head = new Node(data);
+            curent = head;
+        } else {
+            curent.next = new Node(data);
+            curent = curent.next;
+        }
+    }
+
+    //方法：出队操作
+    public int pop() throws Exception {
+        if (head == null) {
+            throw new Exception("队列为空");
+        }
+
+        Node node = head;  //node结点就是我们要出队的结点
+        head = head.next; //出队之后，head指针向下移
+
+        return node.data;
+
+    }
+
+    class Node {
+        int data;
+        Node next;
+
+        public Node(int data) {
+            this.data = data;
+        }
+    }
+
+    public static void main(String[] args) throws Exception {
+        Queue queue = new Queue();
+        //入队操作
+        for (int i = 0; i < 5; i++) {
+            queue.add(i);
+        }
+
+        //出队操作
+        System.out.println(queue.pop());
+        System.out.println(queue.pop());
+        System.out.println(queue.pop());
+
+    }
+}
+```
+
 # 排序算法
 
 ## 直接插入排序
