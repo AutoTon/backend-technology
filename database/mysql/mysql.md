@@ -355,6 +355,88 @@ SELECT film.id, film.description FROM film INNER JOIN (SELECT id FROM film ORDER
 SELECT * FROM film WHERE id < 10000 ORDER BY title DESC LIMIT 50;
 ```
 
+# 面试题
+
+## 如何从一个单词表随机选取3个单词？
+
+### rand()
+
+```
+select word from words order by rand() limit 3;
+```
+
+使用了内存临时表，内存临时表排序的时候使用了rowid排序方法。
+
++ 创建一个临时表。这个临时表使用的是memory引擎，表里有两个字段，第一个字段（简称R）是double类型，第二个字段（简称W）是varchar(64)类型。这个表没有建索引。
++ 从words表中，按主键顺序取出所有的word值。对于每一个word值，调用rand()函数生成一个大于0 小于1的随机小数，并把这个随机小数和word分别存入临时表的R和W字段中，到此，扫描行数是10000。+ 现在临时表有10000行数据了，接下来要在这个没有索引的内存临时表上，按照字段R排序。
++ 初始化sort_buffer。sort_buffer中有两个字段，一个是double类型，另一个是整型。
++ 从内存临时表中一行一行地取出R值和位置信息，分别存入sort_buffer中的两个字段里。这个过程要对内存临时表做全表扫描，此时扫描行数增加10000，变成了20000。
++ 在sort_buffer中根据R的值进行排序。注意，这个过程没有涉及到表操作，所以不会增加扫描行数。+ 排序完成后，取出前三个结果的位置信息，依次到内存临时表中取出word值，返回给客户端。这个过程中，访问了表的三行数据，总扫描行数变成了20003。
+
+### 根据主键随机选取1个，重复三次
+
+```
+select max(id),min(id) into @M,@N from t ;
+set @X= floor((@M-@N+1)*rand() + @N);
+select * from t where id >= @X limit 1;
+```
+
+> 不是真正的随机，因为id可能有漏洞，如1,2,4,5。
+
+### 根据行数随机选取1个，重复三次（）
+
+```
+select count(*) into @C from t;
+set @Y1 = floor(@C * rand());
+set @Y2 = floor(@C * rand());
+set @Y3 = floor(@C * rand());
+select * from t limit @Y1，1； //在应用代码里面取Y1、Y2、Y3值，拼出SQL后执行
+select * from t limit @Y2，1；
+select * from t limit @Y3，1；
+```
+
+### 上面算法的优化
+
+取Y1、Y2和Y3里面最大的一个数，记为M，最小的一个数记为N，执行下面SQL：
+
+```
+select * from t limit N, M-N+1;
+```
+
+然后根据顺序取出对应3条数据。
+
+## 为什么不能在where后面对索引字段使用函数？
+
+```
+select count(*) from tradelog where month(t_modified)=7;
+```
+
+对索引字段做函数操作，可能会破坏索引值的有序性，因此优化器就决定放弃走树搜索功能。导致了全索引扫描。
+
+## 字符串索引字段与数字比较为什么导致全表扫描？
+
+```
+select * from tradelog where tradeid=110717;
+```
+
+在MySQL中，字符串和数字做比较的话，是将字符串转换成数字。相当于执行下面SQL：
+
+```
+select * from tradelog where  CAST(tradid AS signed int) = 110717;
+```
+
+## 隐式字符编码转换
+
+```
+select d.* from tradelog l, trade_detail d where d.tradeid=l.tradeid and l.id=2;
+```
+
+相当于执行：
+
+```
+select * from trade_detail  where CONVERT(traideid USING utf8mb4)=$L2.tradeid.value; 
+```
+
 # mysql运维篇
 
 ## 慢查询
