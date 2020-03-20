@@ -185,6 +185,11 @@ JRE的超集，还包括了编译器和诊断工具，比如jstack、jmap等
 
 原理：利用多个不同的Hash函数来确认元素是否真的存在。
 
+#### HashTable
+
++ 线程安全
++ 一个对象只有一把锁，性能低。
+
 #### HashMap
 
 （1）底层
@@ -207,11 +212,13 @@ JRE的超集，还包括了编译器和诊断工具，比如jstack、jmap等
 
 （1）线程安全
 
-采用"分段锁"，把一个大的Map拆分成n个小的HashTable，根据key.hashCode()确定存放到哪个segment（初始化后segment数量不可更改）
+采用"分段锁"，把一个大的Map拆分成n个小的segment，根据key.hashCode()确定存放到哪个segment（初始化后segment数量不可更改）。
+
+Segment继承了ReenTrantLock，有一个属性HashEntry[]。
 
 （2）延迟初始化
 
-除了第一个Segment之外，剩余的Segment采用的是延迟初始化的机制
+除了第一个Segment之外，剩余的Segment采用的是延迟初始化的机制，后续元素在put方法里面初始化，采用的是自旋+CAS。
 
 ### List
 

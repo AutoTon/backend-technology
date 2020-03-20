@@ -1,5 +1,9 @@
 # spring cloud
 
+## spring boot知识点
+
+![](images/spring-boot-knowledge.png)
+
 ## spring boot 配置文件读取优先级
 
 + （1）命令行参数：默认会把以“--”开头的命令行参数转化成应用中可以使用的配置参数，如 “--name=Alex” 会设置配置参数 “name” 的值为 “Alex”。如果不需要这个功能，可以通过 “SpringApplication.setAddCommandLineProperties(false)” 禁用解析命令行参数。
@@ -38,6 +42,10 @@ Eureka各个节点都是平等的，几个节点挂掉不会影响正常节点�
 ## 注册中心与nginx有什么区别？
 
 一个做服务端负载均衡，一个做客户端负载均衡
+
+## feign
+
+
 
 ## 服务熔断
 

@@ -22,6 +22,20 @@
 + （3）对象在被销毁的时候,会调用destroy-method="..."属性值中所指定的方法.(例如调用container.destroy()方法的时候)
 + （4）lazy-init="true",可以让这个对象在第一次被访问的时候创建
 
+#### 循环依赖
+
+默认开启允许循环依赖，也可通过下面的方式关闭：
+
+```
+BeanFactory.setAllowCircularReferences(false);
+```
+
+底层有3个缓存：
+
++ singletonObjects：一级缓存，存放已创建好的spring bean
++ singletonFactories：二级缓存，产生bean（可提前执行aop返回代理bean）。不直接用二级缓存拿的原因是性能考虑，二级缓存产生对象的消耗比较大。
++ earlySingletonObjects：三级缓存，存放创建好的单例对象，注意还不是spring bean，从二级缓存中取出，取出时同时会移除二级缓存的引用。
+
 ### 非单例管理的对象
 
 + （1）spring读取xml文件的时候,不会创建对象

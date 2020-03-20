@@ -33,3 +33,106 @@
 
 > 注：`Access-Control-Allow-Origin: *`，表示该资源谁都可以用。
 
+## expires缓存
+
+### 优点
+
+可以降低网站带宽，节约成本，同时提升用户访问体验，是web服务非常重要的功能。
+
+### 缺点
+
+被缓存的页面或数据更新了，用户看到的可能还是旧的内容，反而影响用户体验。
+
+> 解决：缩短缓存时间。改名缓存文件。
+
+### 应用
+
+（1）根据文件扩展名进行判断，添加expires功能
+
+```
+location ~ .*\.gif$ {
+    expires 3650d;
+}
+```
+
+（2）根据目录进行判断，添加expires功能
+
+```
+location ~ ^/(images|static)/ {
+    expires 365d;
+}
+```
+
+## gzip压缩功能
+
+对于大于1k的纯文本文件图片、视频等不要压缩。因为不但不会减少，在压缩时消耗CPU内存资源。
+
+（1）开启
+
+```
+gzip on;
+```
+
+（2）设置允许压缩的页面最小字节数
+
+```
+gzip_min_length 1k;
+```
+
+（3）压缩缓冲区大小
+
+```
+gzip_buffers 4 16k;
+```
+
+（4）压缩比率
+
+设置为1时压缩比最小，处理速度最快；设置为9时压缩比最大，传输速度快，但处理最慢，也比较消耗CPU资源。
+
+```
+gzip_comp_level 2;
+```
+
+## 错误页面优雅展示
+
+（1）403跳转
+
+```
+server {
+listen 80;
+server_name www.example.com;
+location / {
+    root html/www;
+    index index.html;
+}
+error_page 403 /403.html; #此路径相对于root
+}
+```
+
+（2）404错误本地文件优雅展示
+
+```
+error_page 404 /404.html;
+```
+
+（3）50x页面本地文件优雅展示
+
+```
+error_page 500 502 503 504 /50x.html;
+location = /50x.html {
+root /data/www/html;
+}
+```
+
+（4）改变状态码为新的状态码，并显示指定的文件内容
+
+```
+error_page 404 =200 /empty.gif;
+```
+
+（5）错误状态码url重定向
+
+```
+error_page 403 http://example.com/forbidden.html;
+error_page 404 =301 http://example.com/notfound.html;
+```

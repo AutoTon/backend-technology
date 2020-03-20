@@ -342,3 +342,215 @@ source /etc/profile
 ulimit -HSn
 cat /proc/sys/fs/file-max
 ```
+
+## 11 CPU相关
+
+### 查看系统CPU核数
+
+```
+# 关于grep和wc的用法请查询它们的手册或者网络搜索
+$ grep 'model name' /proc/cpuinfo | wc -l
+2
+```
+
+### 负载相关
+
+#### 查看负载
+
+```
+$ uptime
+02:34:03 up 2 days, 20:14,  1 user,  load average: 0.63, 0.83, 0.88
+```
+
+依次为：当前时间、系统运行时间、正在登陆的用户数，过去1分钟、5分钟、15分钟的平均负载。
+
+#### 平均负载
+
+单位时间内，系统处于可运行状态和不可中断状态的平均进程数，也就是平均活跃进程数。
+
++ 可运行状态的进程：指正在使用CPU或者正在等待CPU的进程，也就是我们常用ps命令看到的，处于R状态（Running 或 Runnable）的进程。
++ 不可中断状态的进程：正处于内核态关键流程中的进程，并且这些流程是不可打断的，比如最常见的是等待硬件设备的I/O响应，也就是我们在ps命令中看到的D状态（Uninterruptible Sleep，也称为 Disk Sleep）的进程。
+
+理想状态下，平均负载等于CPU核数。
+
+#### 查看CPU负载
+
+```
+mpstat -P ALL 5
+```
+
+#### 查看进程负载
+
+```
+# 间隔5秒后输出一组数据
+$ pidstat -u 5 1
+```
+
+### 平均负载过高时，如何调优
+
+#### CPU密集型进程
+
+```
+mpstat -P ALL 5
+# -P ALL表示监控所有CPU，5表示每5秒刷新一次数据，观察是否有某个cpu的%usr会很高，但iowait应很低
+pidstat -u 5 1
+# 每5秒输出一组数据，观察哪个进程%cpu很高，但是%wait很低，极有可能就是这个进程导致cpu飚高
+```
+
+#### IO密集型进程
+
+```
+mpstat -P ALL 5
+# 观察是否有某个cpu的%iowait很高，同时%usr也较高
+pidstat -u 5 1
+观察哪个进程%wait较高，同时%CPU也较高
+```
+
+#### 大量进程
+
+```
+pidstat -u 5 1
+# 观察那些%wait较高的进程是否有很多
+```
+
+## 查看系统的上下文切换情况
+
+```
+# 每隔5秒输出1组数据
+$ vmstat 5
+procs -----------memory---------- ---swap-- -----io---- -system-- ------cpu-----
+ r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st
+ 0  0      0 7005360  91564 818900    0    0     0     0   25   33  0  0 100  0  0
+```
+
++ cs（context switch）：每秒上下文切换的次数。
++ in（interrupt）：每秒中断的次数。
++ r（Running or Runnable）：就绪队列的长度，也就是正在运行和等待CPU的进程数。
++ b（Blocked）：处于不可中断睡眠状态的进程数。
+
+### 查看进程的上下文切换情况
+
+```
+# 每隔5秒输出1组数据
+$ pidstat -w 5
+Linux 4.15.0 (ubuntu)  09/23/18  _x86_64_  (2 CPU)
+
+08:18:26      UID       PID   cswch/s nvcswch/s  Command
+08:18:31        0         1      0.20      0.00  systemd
+08:18:31        0         8      5.40      0.00  rcu_sched
+...
+```
+
++  cswch：每秒自愿上下文切换（voluntary context switches）的次数。是指进程无法获取所需资源，导致的上下文切换。比如说， I/O、内存等系统资源不足时，就会发生自愿上下文切换。
++  nvcswch：每秒非自愿上下文切换（non voluntary context switches）的次数。是指进程由于时间片已到等原因，被系统强制调度，进而发生的上下文切换。比如说，大量进程都在争抢CPU时，就容易发生非自愿上下文切换。
+
+### 观察中断的变化情况
+
+```
+# -d 参数表示高亮显示变化的区域
+$ watch -d cat /proc/interrupts
+           CPU0       CPU1
+...
+RES:    2450431    5279697   Rescheduling interrupts
+...
+```
+
+### 查看系统CPU统计信息
+
+```
+# 只保留各个CPU的数据
+$ cat /proc/stat | grep ^cpu
+cpu  280580 7407 286084 172900810 83602 0 583 0 0 0
+cpu0 144745 4181 176701 86423902 52076 0 301 0 0 0
+cpu1 135834 3226 109383 86476907 31525 0 282 0 0 0
+```
+
+> 注意：这里列的数值指的是开机以来统计的节拍数。
+
++ user（us）：代表用户态CPU时间。注意，它不包括下面的nice时间，但包括了guest时间。
++ nice（ni）：代表低优先级用户态CPU时间，也就是进程的nice值被调整为1-19之间时的CPU时间。这里注意，nice可取值范围是-20到19，数值越大，优先级反而越低。
++ system（sys）：代表内核态CPU时间。
++ idle（id）：代表空闲时间。注意，它不包括等待I/O的时间（iowait）。
++ iowait（wa）：代表等待I/O的CPU时间。
++ irq（hi）：代表处理硬中断的CPU时间。
++ softirq（si）：代表处理软中断的CPU时间。
++ steal（st）：代表当系统运行在虚拟机中的时候，被其他虚拟机占用的CPU时间。
++ guest（guest）：代表通过虚拟化运行其他操作系统的时间，也就是运行虚拟机的CPU时间。
++ guest_nice（gnice）：代表以低优先级运行虚拟机的时间。
+
+### CPU使用率
+
+除了空闲时间外的其他时间占总CPU时间的百分比。
+
+![](images/cpu-usage.png)
+
+![](images/average-cpu-usage.png)
+
+> top工具实际上是使用了3秒的间隔进行统计。ps使用的却是进程的整个生命周期。
+
+#### 查看CPU使用率
+
+##### top
+
+```
+# 默认每3秒刷新一次
+$ top
+top - 11:58:59 up 9 days, 22:47,  1 user,  load average: 0.03, 0.02, 0.00
+Tasks: 123 total,   1 running,  72 sleeping,   0 stopped,   0 zombie
+%Cpu(s):  0.3 us,  0.3 sy,  0.0 ni, 99.3 id,  0.0 wa,  0.0 hi,  0.0 si,  0.0 st
+KiB Mem :  8169348 total,  5606884 free,   334640 used,  2227824 buff/cache
+KiB Swap:        0 total,        0 free,        0 used.  7497908 avail Mem
+
+  PID USER      PR  NI    VIRT    RES    SHR S  %CPU %MEM     TIME+ COMMAND
+    1 root      20   0   78088   9288   6696 S   0.0  0.1   0:16.83 systemd
+    2 root      20   0       0      0      0 S   0.0  0.0   0:00.05 kthreadd
+    4 root       0 -20       0      0      0 I   0.0  0.0   0:00.00 kworker/0:0H
+...
+```
+
+> 默认显示的是所有CPU的平均值。
+
+##### pidstat
+
+```
+# 每隔1秒输出一组数据，共输出5组
+$ pidstat 1 5
+15:56:02      UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+15:56:03        0     15006    0.00    0.99    0.00    0.00    0.99     1  dockerd
+
+...
+
+Average:      UID       PID    %usr %system  %guest   %wait    %CPU   CPU  Command
+Average:        0     15006    0.00    0.99    0.00    0.00    0.99     -  dockerd
+```
+
+#### 查找CPU使用率过高的进程的函数
+
+```
+# -g开启调用关系分析，-p指定php-fpm的进程号21515
+$ perf top -g -p 21515
+```
+
+### 系统CPU使用率高，却找不到占用CPU高的进程？
+
+```
+$ top
+...
+%Cpu(s): 80.8 us, 15.1 sy,  0.0 ni,  2.8 id,  0.0 wa,  0.0 hi,  1.3 si,  0.0 st
+...
+
+  PID USER      PR  NI    VIRT    RES    SHR S  %CPU %MEM     TIME+ COMMAND
+ 6882 root      20   0    8456   5052   3884 S   2.7  0.1   0:04.78 docker-containe
+ 6947 systemd+  20   0   33104   3716   2340 S   2.7  0.0   0:04.92 nginx
+ 7494 daemon    20   0  336696  15012   7332 S   2.0  0.2   0:03.55 php-fpm
+ 7495 daemon    20   0  336696  15160   7480 S   2.0  0.2   0:03.55 php-fpm
+10547 daemon    20   0  336696  16200   8520 S   2.0  0.2   0:03.13 php-fpm
+10155 daemon    20   0  336696  16200   8520 S   1.7  0.2   0:03.12 php-fpm
+10552 daemon    20   0  336696  16200   8520 S   1.7  0.2   0:03.12 php-fpm
+15006 root      20   0 1168608  66264  37536 S   1.0  0.8   9:39.51 dockerd
+ 4323 root      20   0       0      0      0 I   0.3  0.0   0:00.87 kworker/u4:1
+...
+```
+
++ 应用里直接调用了其他二进制程序，这些程序通常运行时间比较短，通过top等工具也不容易发现。
++ 应用本身在不停地崩溃重启，而启动过程的资源初始化，很可能会占用相当多的CPU。
