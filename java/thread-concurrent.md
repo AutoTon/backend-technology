@@ -2049,6 +2049,12 @@ static class MR extends
 
 解决方法是创建一个新的不可变对象。
 
+##### 应用场景
+
++ 被建模对象的状态变化不频繁
++ 同时对一组相关的数据进行写操作，因此需要保证原子性
++ 使用某个对象作为安全的HashMap的key，比如String、Integer等
+
 #### Copy-on-Write模式
 
 缺点：消耗内存，每次修改都需要复制一个新的对象出来。
@@ -2148,6 +2154,12 @@ class ThreadLocal<T>{
 }
 ```
 
+##### 应用场景
+
++ 需要使用非线程安全对象，但又不希望引入锁。
++ 使用线程安全对象，但希望避免其使用的锁的开销和相关问题。
++ 特定于线程的单例模式。
+
 #### Guarded Suspension模式
 
 可用于异步转同步。
@@ -2244,6 +2256,292 @@ class GuardedObject<T>{
       lock.unlock();
     }
   }
+}
+```
+
+##### 可复用代码
+
+```
+public interface Predicate {
+    boolean evaluate();
+}
+```
+
+```
+public abstract class GuardedAction<V> implements Callable<V> {
+    protected final Predicate guard;
+
+    public GuardedAction(Predicate guard) {
+        this.guard = guard;
+    }
+}
+```
+
+```
+public interface Blocker {
+
+    /**
+     * 在保护条件成立时执行目标动作，否则阻塞当前线程，直到保护条件成立。
+     * 
+     * @param guardedAction
+     *            带保护条件的目标动作
+     * @return
+     * @throws Exception
+     */
+    <V> V callWithGuard(GuardedAction<V> guardedAction) throws Exception;
+
+    /**
+     * 执行stateOperation所指定的操作后，决定是否唤醒本Blocker所暂挂的所有线程中的一个线程。
+     * 
+     * @param stateOperation
+     *            更改状态的操作，其call方法的返回值为true时，该方法才会唤醒被暂挂的线程
+     */
+    void signalAfter(Callable<Boolean> stateOperation) throws Exception;
+
+    void signal() throws InterruptedException;
+
+    /**
+     * 执行stateOperation所指定的操作后，决定是否唤醒本Blocker所暂挂的所有线程。
+     * 
+     * @param stateOperation
+     *            更改状态的操作，其call方法的返回值为true时，该方法才会唤醒被暂挂的线程
+     */
+    void broadcastAfter(Callable<Boolean> stateOperation) throws Exception;
+}
+```
+
+```
+public class ConditionVarBlocker implements Blocker {
+    private final Lock lock;
+    private final Condition condition;
+    private final boolean allowAccess2Lock;
+
+    public ConditionVarBlocker(Lock lock) {
+        this(lock, true);
+    }
+
+    private ConditionVarBlocker(Lock lock, boolean allowAccess2Lock) {
+        this.lock = lock;
+        this.allowAccess2Lock = allowAccess2Lock;
+        this.condition = lock.newCondition();
+    }
+
+    public ConditionVarBlocker() {
+        this(false);
+    }
+
+    public ConditionVarBlocker(boolean allowAccess2Lock) {
+        this(new ReentrantLock(), allowAccess2Lock);
+    }
+
+    public Lock getLock() {
+        if (allowAccess2Lock) {
+            return this.lock;
+        }
+        throw new IllegalStateException("Access to the lock disallowed.");
+    }
+
+    public <V> V callWithGuard(GuardedAction<V> guardedAction)
+            throws Exception {
+        lock.lockInterruptibly();
+        V result;
+        try {
+            final Predicate guard = guardedAction.guard;
+            while (!guard.evaluate()) {
+                Debug.info("waiting...");
+                condition.await();
+            }
+            result = guardedAction.call();
+            return result;
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    public void signalAfter(Callable<Boolean> stateOperation) throws Exception {
+        lock.lockInterruptibly();
+        try {
+            if (stateOperation.call()) {
+                condition.signal();
+            }
+        } finally {
+            lock.unlock();
+        }
+
+    }
+
+    public void broadcastAfter(Callable<Boolean> stateOperation)
+            throws Exception {
+        lock.lockInterruptibly();
+        try {
+            if (stateOperation.call()) {
+                condition.signalAll();
+            }
+        } finally {
+            lock.unlock();
+        }
+
+    }
+
+    public void signal() throws InterruptedException {
+        lock.lockInterruptibly();
+        try {
+            condition.signal();
+
+        } finally {
+            lock.unlock();
+        }
+
+    }
+}
+```
+
+##### 使用示例
+
+应用开发人员只需要根据应用的需要实现GuardedObject、ConcretePredicate、ConcreteGuardedAction即可。
+
+```
+/**
+ * 负责连接告警服务器，并发送告警信息至告警服务器
+ *
+ */
+public class AlarmAgent {
+    // 用于记录AlarmAgent是否连接上告警服务器
+    private volatile boolean connectedToServer = false;
+
+    // 模式角色：GuardedSuspension.Predicate
+    private final Predicate agentConnected = new Predicate() {
+        @Override
+        public boolean evaluate() {
+            return connectedToServer;
+        }
+    };
+
+    // 模式角色：GuardedSuspension.Blocker
+    private final Blocker blocker = new ConditionVarBlocker();
+
+    // 心跳定时器
+    private final Timer heartbeatTimer = new Timer(true);
+
+    // 省略其他代码
+
+    /**
+     * 发送告警信息
+     * 
+     * @param alarm
+     *            告警信息
+     * @throws Exception
+     */
+    public void sendAlarm(final AlarmInfo alarm) throws Exception {
+        /*
+         * 可能需要等待，直到AlarmAgent连接上告警服务器（或者连接中断后重新连连上服务器）。<br/>
+         * AlarmInfo类的源码参见本书配套下载。
+         */
+        // 模式角色：GuardedSuspension.GuardedAction
+        GuardedAction<Void> guardedAction =
+                new GuardedAction<Void>(agentConnected) {
+                    public Void call() throws Exception {
+                        doSendAlarm(alarm);
+                        return null;
+                    }
+                };
+
+        blocker.callWithGuard(guardedAction);
+    }
+
+    // 通过网络连接将告警信息发送给告警服务器
+    private void doSendAlarm(AlarmInfo alarm) {
+        // 省略其他代码
+        Debug.info("sending alarm " + alarm);
+
+        // 模拟发送告警至服务器的耗时
+        try {
+            Thread.sleep(50);
+        } catch (Exception e) {
+
+        }
+    }
+
+    public void init() {
+        // 省略其他代码
+
+        // 告警连接线程
+        Thread connectingThread = new Thread(new ConnectingTask());
+
+        connectingThread.start();
+
+        heartbeatTimer.schedule(new HeartbeatTask(), 60_000, 2000);
+    }
+
+    public void disconnect() {
+        // 省略其他代码
+        Debug.info("disconnected from alarm server.");
+        connectedToServer = false;
+    }
+
+    protected void onConnected() {
+        try {
+            blocker.signalAfter(new Callable<Boolean>() {
+                @Override
+                public Boolean call() {
+                    connectedToServer = true;
+                    Debug.info("connected to server");
+                    return Boolean.TRUE;
+                }
+            });
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    protected void onDisconnected() {
+        connectedToServer = false;
+    }
+
+    // 负责与告警服务器建立网络连接
+    private class ConnectingTask implements Runnable {
+        @Override
+        public void run() {
+            // 省略其他代码
+
+            // 模拟连接操作耗时
+            Tools.randomPause(100, 40);
+
+            onConnected();
+        }
+    }
+
+    /**
+     * 心跳定时任务：定时检查与告警服务器的连接是否正常，发现连接异常后自动重新连接
+     */
+    private class HeartbeatTask extends TimerTask {
+        // 省略其他代码
+
+        @Override
+        public void run() {
+            // 省略其他代码
+
+            if (!testConnection()) {
+                onDisconnected();
+                reconnect();
+            }
+
+        }
+
+        private boolean testConnection() {
+            // 省略其他代码
+
+            return true;
+        }
+
+        private void reconnect() {
+            ConnectingTask connectingThread = new ConnectingTask();
+
+            // 直接在心跳定时器线程中执行
+            connectingThread.run();
+        }
+
+    }
 }
 ```
 
@@ -2371,6 +2669,333 @@ class Singleton{
     }
     return singleton;
   }
+}
+```
+
+#### Serial-Thread-Confinement模式
+
+将多个并发的任务存入队列实现任务的串行化，并为这些串行化的任务创建唯一的一个工作者线程进行处理。本质是使用一个开销更小的锁（队列涉及的锁）去替代另一个可能的开销更大的锁。
+
+##### 可复用代码
+
+```
+/**
+ * 对任务处理的抽象。
+ *
+ * @param <T>
+ *            表示任务的类型
+ * @param <V>
+ *            表示任务处理结果的类型
+ */
+public interface TaskProcessor<T, V> {
+    /**
+     * 对指定任务进行处理。
+     * 
+     * @param task
+     *            任务
+     * @return 任务处理结果
+     * @throws Exception
+     */
+    V doProcess(T task) throws Exception;
+}
+```
+
+```
+/**
+ * 可停止的抽象线程。
+ * 
+ * 模式角色：Two-phaseTermination.AbstractTerminatableThread
+ */
+public abstract class AbstractTerminatableThread extends Thread
+        implements Terminatable {
+    final static Logger logger =
+            Logger.getLogger(AbstractTerminatableThread.class);
+    private final boolean DEBUG = true;
+
+    // 模式角色：Two-phaseTermination.TerminationToken
+    public final TerminationToken terminationToken;
+
+    public AbstractTerminatableThread() {
+        this(new TerminationToken());
+    }
+
+    /**
+     * 
+     * @param terminationToken
+     *            线程间共享的线程终止标志实例
+     */
+    public AbstractTerminatableThread(TerminationToken terminationToken) {
+        this.terminationToken = terminationToken;
+        terminationToken.register(this);
+    }
+
+    /**
+     * 留给子类实现其线程处理逻辑。
+     * 
+     * @throws Exception
+     */
+    protected abstract void doRun() throws Exception;
+
+    /**
+     * 留给子类实现。用于实现线程停止后的一些清理动作。
+     * 
+     * @param cause
+     */
+    protected void doCleanup(Exception cause) {
+        // 什么也不做
+    }
+
+    /**
+     * 留给子类实现。用于执行线程停止所需的操作。
+     */
+    protected void doTerminiate() {
+        // 什么也不做
+    }
+
+    @Override
+    public void run() {
+        Exception ex = null;
+        try {
+            for (;;) {
+
+                // 在执行线程的处理逻辑前先判断线程停止的标志。
+                if (terminationToken.isToShutdown()
+                        && terminationToken.reservations.get() <= 0) {
+                    break;
+                }
+                doRun();
+            }
+
+        } catch (Exception e) {
+            // 使得线程能够响应interrupt调用而退出
+            ex = e;
+            if (e instanceof InterruptedException) {
+                if (DEBUG) {
+                    logger.debug(e);
+                }
+            } else {
+                logger.error("", e);
+            }
+        } finally {
+            try {
+                doCleanup(ex);
+            } finally {
+                terminationToken.notifyThreadTermination(this);
+            }
+        }
+    }
+
+    @Override
+    public void interrupt() {
+        terminate();
+    }
+
+    /*
+     * 请求停止线程。
+     * 
+     * @see io.github.viscent.mtpattern.tpt.Terminatable#terminate()
+     */
+    @Override
+    public void terminate() {
+        terminationToken.setToShutdown(true);
+        try {
+            doTerminiate();
+        } finally {
+
+            // 若无待处理的任务，则试图强制终止线程
+            if (terminationToken.reservations.get() <= 0) {
+                super.interrupt();
+            }
+        }
+    }
+
+    public void terminate(boolean waitUtilThreadTerminated) {
+        terminate();
+        if (waitUtilThreadTerminated) {
+            try {
+                this.join();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+}
+```
+
+```
+public class TerminatableWorkerThread<T, V> extends AbstractTerminatableThread {
+    private final BlockingQueue<Runnable> workQueue;
+
+    // 负责真正执行任务的对象
+    private final TaskProcessor<T, V> taskProcessor;
+
+    public TerminatableWorkerThread(BlockingQueue<Runnable> workQueue,
+            TaskProcessor<T, V> taskProcessor) {
+        this.workQueue = workQueue;
+        this.taskProcessor = taskProcessor;
+    }
+
+    /**
+     * 接收并行任务，并将其串行化。
+     * 
+     * @param task
+     *            任务
+     * @return 可借以获取任务处理结果的Promise（参见第6章，Promise模式）实例。
+     * @throws InterruptedException
+     */
+    public Future<V> submit(final T task) throws InterruptedException {
+        Callable<V> callable = new Callable<V>() {
+
+            @Override
+            public V call() throws Exception {
+                return taskProcessor.doProcess(task);
+            }
+
+        };
+
+        FutureTask<V> ft = new FutureTask<V>(callable);
+        workQueue.put(ft);
+
+        terminationToken.reservations.incrementAndGet();
+        return ft;
+    }
+
+    /**
+     * 执行任务的处理逻辑
+     */
+    @Override
+    protected void doRun() throws Exception {
+        Runnable ft = workQueue.take();
+        try {
+            ft.run();
+        } finally {
+            terminationToken.reservations.decrementAndGet();
+        }
+
+    }
+
+}
+```
+
+```
+public abstract class AbstractSerializer<T, V> {
+    private final TerminatableWorkerThread<T, V> workerThread;
+
+    public AbstractSerializer(BlockingQueue<Runnable> workQueue,
+            TaskProcessor<T, V> taskProcessor) {
+        workerThread = new TerminatableWorkerThread<T, V>(workQueue,
+                taskProcessor);
+    }
+
+    /**
+     * 留给子类实现。用于根据指定参数生成相应的任务实例。
+     * 
+     * @param params
+     *            参数列表
+     * @return 任务实例。用于提交给WorkerThread。
+     */
+    protected abstract T makeTask(Object... params);
+
+    /**
+     * 该类对外暴露的服务方法。 该类的子需要定义一个命名含义比该方法更为具体的方法（如downloadFile）。
+     * 含义具体的服务方法（如downloadFile）可直接调用该方法。
+     * 
+     * @param params
+     *            客户端代码调用该方法时所传递的参数列表
+     * @return 可借以获取任务处理结果的Promise（参见第6章，Promise模式）实例。
+     * @throws InterruptedException
+     */
+    protected Future<V> service(Object... params) throws InterruptedException {
+        T task = makeTask(params);
+        Future<V> resultPromise = workerThread.submit(task);
+
+        return resultPromise;
+    }
+
+    /**
+     * 初始化该类对外暴露的服务。
+     */
+    public void init() {
+        workerThread.start();
+    }
+
+    /**
+     * 停止该类对外暴露的服务。
+     */
+    public void shutdown() {
+        workerThread.terminate();
+    }
+
+}
+```
+
+##### 使用示例
+
++ 定义Serializer提交给WorkerThread的任务对应的类型。
++ 定义AbstractSerializer的子类，定义一个名字含义比service更具体的方法，该方法可直接调用父类的service()。
++ 定义TaskProcessor接口的实现类。
+
+```
+public class ReusableCodeExample {
+
+    public static void main(String[] args)
+            throws InterruptedException, ExecutionException {
+        SomeService ss = new SomeService();
+        ss.init();
+        Future<String> result = ss.doSomething("Serial Thread Confinement", 1);
+        // 模拟执行其他操作
+        Tools.randomPause(100, 50);
+
+        Debug.info(result.get());
+
+        ss.shutdown();
+
+    }
+
+    private static class Task {
+        public final String message;
+        public final int id;
+
+        public Task(String message, int id) {
+            this.message = message;
+            this.id = id;
+        }
+    }
+
+    static class SomeService extends AbstractSerializer<Task, String> {
+
+        public SomeService() {
+            super(
+                    new ArrayBlockingQueue<Runnable>(100),
+                    new TaskProcessor<Task, String>() {
+
+                        @Override
+                        public String doProcess(Task task) throws Exception {
+                            Debug.info("[" + task.id + "]:" + task.message);
+                            return task.message + " accepted.";
+                        }
+
+                    });
+        }
+
+        @Override
+        protected Task makeTask(Object... params) {
+            String message = (String) params[0];
+            int id = (Integer) params[1];
+
+            return new Task(message, id);
+        }
+
+        public Future<String> doSomething(String message, int id)
+                throws InterruptedException {
+            Future<String> result = null;
+            result = service(message, id);
+            return result;
+        }
+
+    }
+
 }
 ```
 
@@ -2616,6 +3241,290 @@ class Logger {
 }
 ```
 
+##### 可复用代码
+
+```
+public interface Terminatable {
+    void terminate();
+}
+```
+
+```
+/**
+ * 线程停止标志。
+ *
+ */
+public class TerminationToken {
+
+    // 使用volatile修饰，以保证无需显式锁的情况下该变量的内存可见性
+    protected volatile boolean toShutdown = false;
+    public final AtomicInteger reservations = new AtomicInteger(0);
+
+    /*
+     * 在多个可停止线程实例共享一个TerminationToken实例的情况下，该队列用于
+     * 记录那些共享TerminationToken实例的可停止线程，以便尽可能减少锁的使用 的情况下，实现这些线程的停止。
+     */
+    private final Queue<WeakReference<Terminatable>> coordinatedThreads;
+
+    public TerminationToken() {
+        coordinatedThreads = new ConcurrentLinkedQueue<WeakReference<Terminatable>>();
+    }
+
+    public boolean isToShutdown() {
+        return toShutdown;
+    }
+
+    protected void setToShutdown(boolean toShutdown) {
+        this.toShutdown = true;
+    }
+
+    protected void register(Terminatable thread) {
+        coordinatedThreads.add(new WeakReference<Terminatable>(thread));
+    }
+
+    /**
+     * 通知TerminationToken实例：共享该实例的所有可停止线程中的一个线程停止了， 以便其停止其它未被停止的线程。
+     * 
+     * @param thread
+     *            已停止的线程
+     */
+    protected void notifyThreadTermination(Terminatable thread) {
+        WeakReference<Terminatable> wrThread;
+        Terminatable otherThread;
+        while (null != (wrThread = coordinatedThreads.poll())) {
+            otherThread = wrThread.get();
+            if (null != otherThread && otherThread != thread) {
+                otherThread.terminate();
+            }
+        }
+    }
+
+}
+```
+
+```
+/**
+ * 可停止的抽象线程。
+ * 
+ * 模式角色：Two-phaseTermination.AbstractTerminatableThread
+ */
+public abstract class AbstractTerminatableThread extends Thread
+        implements Terminatable {
+    final static Logger logger =
+            Logger.getLogger(AbstractTerminatableThread.class);
+    private final boolean DEBUG = true;
+
+    // 模式角色：Two-phaseTermination.TerminationToken
+    public final TerminationToken terminationToken;
+
+    public AbstractTerminatableThread() {
+        this(new TerminationToken());
+    }
+
+    /**
+     * 
+     * @param terminationToken
+     *            线程间共享的线程终止标志实例
+     */
+    public AbstractTerminatableThread(TerminationToken terminationToken) {
+        this.terminationToken = terminationToken;
+        terminationToken.register(this);
+    }
+
+    /**
+     * 留给子类实现其线程处理逻辑。
+     * 
+     * @throws Exception
+     */
+    protected abstract void doRun() throws Exception;
+
+    /**
+     * 留给子类实现。用于实现线程停止后的一些清理动作。
+     * 
+     * @param cause
+     */
+    protected void doCleanup(Exception cause) {
+        // 什么也不做
+    }
+
+    /**
+     * 留给子类实现。用于执行线程停止所需的操作。
+     */
+    protected void doTerminiate() {
+        // 什么也不做
+    }
+
+    @Override
+    public void run() {
+        Exception ex = null;
+        try {
+            for (;;) {
+
+                // 在执行线程的处理逻辑前先判断线程停止的标志。
+                if (terminationToken.isToShutdown()
+                        && terminationToken.reservations.get() <= 0) {
+                    break;
+                }
+                doRun();
+            }
+
+        } catch (Exception e) {
+            // 使得线程能够响应interrupt调用而退出
+            ex = e;
+            if (e instanceof InterruptedException) {
+                if (DEBUG) {
+                    logger.debug(e);
+                }
+            } else {
+                logger.error("", e);
+            }
+        } finally {
+            try {
+                doCleanup(ex);
+            } finally {
+                terminationToken.notifyThreadTermination(this);
+            }
+        }
+    }
+
+    @Override
+    public void interrupt() {
+        terminate();
+    }
+
+    /*
+     * 请求停止线程。
+     * 
+     * @see io.github.viscent.mtpattern.tpt.Terminatable#terminate()
+     */
+    @Override
+    public void terminate() {
+        terminationToken.setToShutdown(true);
+        try {
+            doTerminiate();
+        } finally {
+
+            // 若无待处理的任务，则试图强制终止线程
+            if (terminationToken.reservations.get() <= 0) {
+                super.interrupt();
+            }
+        }
+    }
+
+    public void terminate(boolean waitUtilThreadTerminated) {
+        terminate();
+        if (waitUtilThreadTerminated) {
+            try {
+                this.join();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+}
+```
+
+##### 使用示例
+
+应用代码只需要在定义`AbstractTerminatableThread`的子类时实现`doRun`方法。
+
+```
+public class AlarmSendingThread extends AbstractTerminatableThread {
+
+    private final AlarmAgent alarmAgent = new AlarmAgent();
+
+    /*
+     * 告警队列。 模式角色：HalfSync/HalfAsync.Queue
+     */
+    private final BlockingQueue<AlarmInfo> alarmQueue;
+    private final ConcurrentMap<String, AtomicInteger> submittedAlarmRegistry;
+
+    public AlarmSendingThread() {
+
+        alarmQueue = new ArrayBlockingQueue<AlarmInfo>(100);
+
+        submittedAlarmRegistry = new ConcurrentHashMap<String, AtomicInteger>();
+
+        alarmAgent.init();
+    }
+
+    @Override
+    protected void doRun() throws Exception {
+        AlarmInfo alarm;
+        alarm = alarmQueue.take();
+        terminationToken.reservations.decrementAndGet();
+
+        try {
+            // 将告警信息发送至告警服务器
+            alarmAgent.sendAlarm(alarm);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        /*
+         * 处理恢复告警：将相应的故障告警从注册表中删除， 使得相应故障恢复后若再次出现相同故障，该故障信息能够上报到服务器
+         */
+        if (AlarmType.RESUME == alarm.type) {
+            String key =
+                    AlarmType.FAULT.toString() + ':' + alarm.getId() + '@'
+                            + alarm.getExtraInfo();
+            submittedAlarmRegistry.remove(key);
+
+            key =
+                    AlarmType.RESUME.toString() + ':' + alarm.getId() + '@'
+                            + alarm.getExtraInfo();
+            submittedAlarmRegistry.remove(key);
+        }
+
+    }
+
+    public int sendAlarm(final AlarmInfo alarmInfo) {
+        AlarmType type = alarmInfo.type;
+        String id = alarmInfo.getId();
+        String extraInfo = alarmInfo.getExtraInfo();
+
+        if (terminationToken.isToShutdown()) {
+            // 记录告警信息
+            System.err.println("rejected alarm:" + id + "," + extraInfo);
+            return -1;
+        }
+
+        int duplicateSubmissionCount = 0;
+        try {
+
+            AtomicInteger prevSubmittedCounter;
+
+            prevSubmittedCounter =
+                    submittedAlarmRegistry.putIfAbsent(type.toString()
+                            + ':' + id + '@' + extraInfo, new AtomicInteger(0));
+            if (null == prevSubmittedCounter) {
+                alarmQueue.put(alarmInfo);
+                terminationToken.reservations.incrementAndGet();
+            } else {
+
+                // 故障未恢复，不用重复发送告警信息给服务器，故仅增加计数
+                duplicateSubmissionCount =
+                        prevSubmittedCounter.incrementAndGet();
+            }
+        } catch (Throwable t) {
+            t.printStackTrace();
+        }
+
+        return duplicateSubmissionCount;
+    }
+
+    @Override
+    protected void doCleanup(Exception exp) {
+        if (null != exp && !(exp instanceof InterruptedException)) {
+            exp.printStackTrace();
+        }
+        alarmAgent.disconnect();
+    }
+
+}
+```
+
 #### 生产者-消费者模式
 
 ![](images/producer-consumer-model.png)
@@ -2744,6 +3653,205 @@ class LogMsg {
   LogMsg(LEVEL lvl, String msg){}
   //省略toString()实现
   String toString(){}
+}
+```
+
+#### promise模式
+
+JDK中的`Future`、`FutureTask`。
+
+##### 使用示例
+
+```
+public interface FTPUploader {
+    void init(String ftpServer, String ftpUserName, String password,
+            String serverDir) throws Exception;
+
+    void upload(File file) throws Exception;
+
+    void disconnect();
+}
+```
+
+```
+public class FTPClientUtil implements FTPUploader {
+    final FTPClient ftp = new FTPClient();
+    final Map<String, Boolean> dirCreateMap = new HashMap<>();
+
+    public void init(String ftpServer, String userName, String password,
+            String serverDir)
+            throws Exception {
+
+        FTPClientConfig config = new FTPClientConfig();
+        ftp.configure(config);
+
+        int reply;
+        ftp.connect(ftpServer);
+
+        System.out.print(ftp.getReplyString());
+
+        reply = ftp.getReplyCode();
+
+        if (!FTPReply.isPositiveCompletion(reply)) {
+            ftp.disconnect();
+            throw new RuntimeException("FTP server refused connection.");
+        }
+        boolean isOK = ftp.login(userName, password);
+        if (isOK) {
+            System.out.println(ftp.getReplyString());
+
+        } else {
+            throw new RuntimeException(
+                    "Failed to login." + ftp.getReplyString());
+        }
+
+        reply = ftp.cwd(serverDir);
+        if (!FTPReply.isPositiveCompletion(reply)) {
+            ftp.disconnect();
+            throw new RuntimeException(
+                    "Failed to change working directory.reply:"
+                            + reply);
+        } else {
+
+            System.out.println(ftp.getReplyString());
+        }
+
+        ftp.setFileType(FTP.ASCII_FILE_TYPE);
+
+    }
+
+    @Override
+    public void upload(File file) throws Exception {
+        InputStream dataIn =
+                new BufferedInputStream(new FileInputStream(file),
+                        1024 * 8);
+        boolean isOK;
+        String dirName = file.getParentFile().getName();
+        String fileName = dirName + '/' + file.getName();
+        ByteArrayInputStream checkFileInputStream =
+                new ByteArrayInputStream(
+                        "".getBytes());
+
+        try {
+            if (!dirCreateMap.containsKey(dirName)) {
+                ftp.makeDirectory(dirName);
+                dirCreateMap.put(dirName, null);
+            }
+
+            try {
+                isOK = ftp.storeFile(fileName, dataIn);
+            } catch (IOException e) {
+                throw new RuntimeException("Failed to upload " + file, e);
+            }
+            if (isOK) {
+                ftp.storeFile(fileName + ".c", checkFileInputStream);
+
+            } else {
+
+                throw new RuntimeException(
+                        "Failed to upload " + file + ",reply:"
+                                + ftp.getReplyString());
+            }
+        } finally {
+            dataIn.close();
+        }
+
+    }
+
+    @Override
+    public void disconnect() {
+        if (ftp.isConnected()) {
+            try {
+                ftp.disconnect();
+            } catch (IOException ioe) {
+                // 什么也不做
+            }
+        }
+        // 省略与清单6-2中相同的代码
+    }
+}
+```
+
+```
+public class DataSyncTask implements Runnable {
+    private final Map<String, String> taskParameters;
+
+    public DataSyncTask(Map<String, String> taskParameters) {
+        this.taskParameters = taskParameters;
+    }
+
+    @Override
+    public void run() {
+        String ftpServer = taskParameters.get("server");
+        String ftpUserName = taskParameters.get("userName");
+        String password = taskParameters.get("password");
+        String serverDir = taskParameters.get("serverDir");
+
+        /*
+         * 接口FTPUploader用于对FTP客户端进行抽象，其源码参见本书配套下载。
+         */
+        // 初始化FTP客户端实例
+        Future<FTPUploader> ftpClientUtilPromise =
+                FTPUploaderPromisor.newFTPUploaderPromise(ftpServer,
+                        ftpUserName, password, serverDir);
+
+        // 查询数据库生成本地文件
+        generateFilesFromDB();
+
+        FTPUploader ftpClientUtil = null;
+        try {
+            // 获取初始化完毕的FTP客户端实例
+            ftpClientUtil = ftpClientUtilPromise.get();
+        } catch (InterruptedException e) {
+            ;
+        } catch (ExecutionException e) {
+            throw new RuntimeException(e);
+        }
+
+        // 上传文件
+        uploadFiles(ftpClientUtil);
+
+        // 省略其他代码
+    }
+
+    private void generateFilesFromDB() {
+        Debug.info("generating files from database...");
+
+        // 模拟实际操作所需的耗时
+        Tools.randomPause(1000, 500);
+
+        // 省略其他代码
+    }
+
+    private void uploadFiles(FTPUploader ftpClientUtil) {
+        Set<File> files = retrieveGeneratedFiles();
+        for (File file : files) {
+            try {
+                ftpClientUtil.upload(file);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+
+    }
+
+    protected Set<File> retrieveGeneratedFiles() {
+        Set<File> files = new HashSet<File>();
+
+        // 模拟生成本地文件
+        File currDir =
+                new File(Tools.getWorkingDir(
+                        "../classes/io/github/viscent/mtpattern/ch6/promise/example"));
+        for (File f : currDir.listFiles(
+                (dir, name) -> new File(dir, name).isFile()
+                        && name.endsWith(".class"))) {
+            files.add(f);
+        }
+
+        // 省略其他代码
+        return files;
+    }
+
 }
 ```
 
