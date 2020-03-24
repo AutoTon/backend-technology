@@ -267,6 +267,28 @@ bash -n <shell-script>
 bash -v/-x <shell-script>
 ```
 
+### urlEncode
+
+```
+urlencode() {
+
+  local LANG=C
+  local length="${#1}"
+  i=0
+  while :
+  do
+    [ $length -gt $i ]&&{
+      local c="${1:$i:1}"
+      case $c in
+      [a-zA-Z0-9.~_-]) printf "$c" ;;
+      *) printf '%%%02X' "'$c" ;; 
+      esac
+    }||break
+    let i++
+  done
+}
+```
+
 ## 9 软件安装
 
 ### 9.1 node.js
