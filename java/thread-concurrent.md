@@ -3855,6 +3855,1573 @@ public class DataSyncTask implements Runnable {
 }
 ```
 
+#### Master-Slave模式
+
+将一个任务（原始任务）分解为若干个语义等同的子任务，并由专门的工作者线程来并行执行这些子任务。原始任务的处理结果是通过整合各个子任务的处理结果而形成的。
+
+##### 可复用代码
+
+```
+/**
+ * 对原始任务分解算法策略的抽象。
+ *
+ * @param <T>
+ *            子任务类型
+ */
+public interface TaskDivideStrategy<T> {
+    /**
+     * 返回下一个子任务。 若返回值为null，则表示无后续子任务。
+     * 
+     * @return 下一个子任务
+     */
+    T nextChunk();
+}
+```
+
+```
+/**
+ * 对子任务派发算法策略的抽象。
+ *
+ * @param <T>
+ *            子任务类型
+ * @param <V>
+ *            子任务处理结果类型
+ */
+public interface SubTaskDispatchStrategy<T, V> {
+    /**
+     * 根据指定的原始任务分解策略，将分解得来的各个子任务派发给一组Slave参与者实例。
+     * 
+     * @param slaves
+     *            可以接受子任务的一组Slave参与者实例
+     * @param taskDivideStrategy
+     *            原始任务分解策略
+     * @return iterator。遍历该iterator可得到用于获取子任务处理结果的Promise（参见第6章，Promise模式）实例。
+     * @throws InterruptedException
+     *             当Slave工作者线程被中断时抛出该异常。
+     */
+    Iterator<Future<V>> dispatch(Set<? extends SlaveSpec<T, V>> slaves,
+            TaskDivideStrategy<T> taskDivideStrategy)
+            throws InterruptedException;
+}
+```
+
+```
+/**
+ * 简单的轮询（Round-Robin）派发算法策略。
+ *
+ * @param <T>
+ *            原始任务类型
+ * @param <V>
+ *            子任务处理结果类型
+ */
+public class RoundRobinSubTaskDispatchStrategy<T, V> implements
+        SubTaskDispatchStrategy<T, V> {
+
+    @SuppressWarnings("unchecked")
+    @Override
+    public Iterator<Future<V>> dispatch(Set<? extends SlaveSpec<T, V>> slaves,
+            TaskDivideStrategy<T> taskDivideStrategy)
+            throws InterruptedException {
+        final List<Future<V>> subResults = new LinkedList<Future<V>>();
+        T subTask;
+
+        Object[] arrSlaves = slaves.toArray();
+        int i = -1;
+        final int slaveCount = arrSlaves.length;
+        Future<V> subTaskResultPromise;
+
+        while (null != (subTask = taskDivideStrategy.nextChunk())) {
+            i = (i + 1) % slaveCount;
+            subTaskResultPromise =
+                    ((WorkerThreadSlave<T, V>) arrSlaves[i])
+                            .submit(subTask);
+            subResults.add(subTaskResultPromise);
+        }
+
+        return subResults.iterator();
+    }
+
+}
+```
+
+```
+/**
+ * 对 Master-Slave模式Slave参与者的抽象。
+ *
+ * @param <T>
+ *            子任务类型
+ * @param <V>
+ *            子任务处理结果类型
+ */
+public interface SlaveSpec<T, V> {
+    /**
+     * 用于Master向其提交一个子任务。
+     * 
+     * @param task
+     *            子任务
+     * @return 可借以获取子任务处理结果的Promise（参见第6章，Promise模式）实例。
+     * @throws InterruptedException
+     */
+    Future<V> submit(final T task) throws InterruptedException;
+
+    /**
+     * 初始化Slave实例提供的服务
+     */
+    void init();
+
+    /**
+     * 停止Slave实例对外提供的服务
+     */
+    void shutdown();
+}
+```
+
+```
+/**
+ * 基于工作者线程的Slave参与者通用实现。
+ *
+ * @param <T>
+ *            子任务类型
+ * @param <V>
+ *            子任务处理结果类型
+ */
+public abstract class WorkerThreadSlave<T, V> extends
+        AbstractTerminatableThread implements SlaveSpec<T, V> {
+    private final BlockingQueue<Runnable> taskQueue;
+
+    public WorkerThreadSlave(BlockingQueue<Runnable> taskQueue) {
+        this.taskQueue = taskQueue;
+    }
+
+    public Future<V> submit(final T task) throws InterruptedException {
+
+        FutureTask<V> ft = new FutureTask<V>(new Callable<V>() {
+
+            @Override
+            public V call() throws Exception {
+                V result;
+
+                try {
+                    result = doProcess(task);
+                } catch (Exception e) {
+                    SubTaskFailureException stfe =
+                            newSubTaskFailureException(task, e);
+                    throw stfe;
+                }
+
+                return result;
+            }
+
+        });
+        taskQueue.put(ft);
+        terminationToken.reservations.incrementAndGet();
+        return ft;
+    }
+
+    private SubTaskFailureException newSubTaskFailureException(final T subTask,
+            Exception cause) {
+        RetryInfo<T, V> retryInfo =
+                new RetryInfo<T, V>(subTask, new Callable<V>() {
+                    @Override
+                    public V call() throws Exception {
+                        V result;
+                        result = doProcess(subTask);
+                        return result;
+                    }
+
+                });
+
+        return new SubTaskFailureException(retryInfo, cause);
+    }
+
+    /**
+     * 留给子类实现。用于实现子任务的处理逻辑。
+     * 
+     * @param task
+     *            子任务
+     * @return 子任务的处理结果
+     * @throws Exception
+     */
+    protected abstract V doProcess(T task) throws Exception;
+
+    @Override
+    protected void doRun() throws Exception {
+        try {
+            Runnable task = taskQueue.take();
+            task.run();
+        } finally {
+            terminationToken.reservations.decrementAndGet();
+        }
+
+    }
+
+    @Override
+    public void init() {
+        start();
+    }
+
+    @Override
+    public void shutdown() {
+        terminate(true);
+    }
+}
+```
+
+```
+/**
+ * Master-Slave模式Master参与者的可复用实现。
+ *
+ * @param <T>
+ *            子任务对象类型
+ * @param <V>
+ *            子任务的处理结果类型
+ * @param <R>
+ *            原始任务处理结果类型
+ */
+public abstract class AbstractMaster<T, V, R> {
+    protected volatile Set<? extends SlaveSpec<T, V>> slaves;
+
+    // 子任务派发算法策略
+    private volatile SubTaskDispatchStrategy<T, V> dispatchStrategy;
+
+    public AbstractMaster() {
+
+    }
+
+    protected void init() {
+        slaves = createSlaves();
+        dispatchStrategy = newSubTaskDispatchStrategy();
+        for (SlaveSpec<T, V> slave : slaves) {
+            slave.init();
+        }
+    }
+
+    /**
+     * 对子类暴露的服务方法。 该类的子类需要定义一个比该方法命名更为具体的服务方法（如downloadFileService）。
+     * 由命名含义具体的服务方法（如downloadFileService）调用该方法。
+     * 该方法使用了Template（模板）模式、Strategy（策略）模式。
+     * 
+     * @param params
+     *            客户端代码传递的参数列表
+     */
+    protected R service(Object... params) throws Exception {
+        final TaskDivideStrategy<T> taskDivideStrategy =
+                newTaskDivideStrategy(params);
+
+        /*
+         * 对原始任务进行分解，并将分解得来的子任务派发给Slave参与者实例。 这里使用了Strategy（策略）模式：原始任务分解和子任务派发
+         * 这两个具体的计算是通过调用需要的算法策略（对象）实现的。
+         */
+        Iterator<Future<V>> subResults =
+                dispatchStrategy.dispatch(slaves,
+                        taskDivideStrategy);
+
+        // 等待Slave实例处理结束
+        for (SlaveSpec<T, V> slave : slaves) {
+            slave.shutdown();
+        }
+
+        // 合并子任务的处理结果
+        R result = combineResults(subResults);
+        return result;
+    }
+
+    /**
+     * 留给子类实现。用于创建原始任务分解算法策略。
+     * 
+     * @param params
+     *            客户端代码调用service方法时传递的参数列表
+     */
+    protected abstract TaskDivideStrategy<T> newTaskDivideStrategy(
+            Object... params);
+
+    /**
+     * 用于创建子任务派发算法策略。 默认使用轮询（Round-Robin）派发算法。
+     * 
+     * @return 子任务派发算法策略实例。
+     */
+    protected SubTaskDispatchStrategy<T, V> newSubTaskDispatchStrategy() {
+        return new RoundRobinSubTaskDispatchStrategy<T, V>();
+    }
+
+    /**
+     * 留给子类实现。用于创建Slave参与者实例。
+     * 
+     * @return 一组Slave参与者实例。
+     */
+    protected abstract Set<? extends SlaveSpec<T, V>> createSlaves();
+
+    /**
+     * 留给子类实现。用于合并子任务的处理结果。
+     * 
+     * @param subResults
+     *            各个子任务处理结果
+     * @return 原始任务的处理结果
+     */
+    protected abstract R combineResults(Iterator<Future<V>> subResults);
+
+}
+```
+
+```
+/**
+ * 表示子任务处理失败的异常。
+ */
+@SuppressWarnings("serial")
+public class SubTaskFailureException extends Exception {
+
+    /**
+     * 对处理失败的子任务进行重试所需的信息
+     */
+    @SuppressWarnings("rawtypes")
+    public final RetryInfo retryInfo;
+
+    @SuppressWarnings("rawtypes")
+    public SubTaskFailureException(RetryInfo retryInfo, Exception cause) {
+        super(cause);
+        this.retryInfo = retryInfo;
+    }
+
+}
+```
+
+```
+/**
+ * 对处理失败的子任务进行重试所需的信息。
+ *
+ * @param <T>
+ *            子任务类型
+ * @param <V>
+ *            子任务处理结果类型
+ */
+public class RetryInfo<T, V> {
+    public final T subTask;
+    public final Callable<V> redoCommand;
+
+    public RetryInfo(T subTask, Callable<V> redoCommand) {
+        this.subTask = subTask;
+        this.redoCommand = redoCommand;
+    }
+}
+```
+
+##### 使用示例
+
++ 创建TaskDivideStrategy接口的实现类，实现原始任务分解算法。
++ 创建AbstractMaster的子类。子类还要定义一个服务方法，比其父类的service()更具体。
++ 创建WorkerThreadSlave的子类。实现父类中的doProcess()。
++ 创建SubTaskDispatchStrategy的实现类。默认提供了RoundRobinSubTaskDispatchStrategy。
+
+```
+public class ParallelPrimeGenerator {
+
+	public static void main(String[] args) throws Exception {
+		PrimeGeneratorService primeGeneratorService = new PrimeGeneratorService();
+
+		Set<BigInteger> result = primeGeneratorService.generatePrime(Integer
+		    .valueOf(args[0]));
+		System.out.println("Generated " + result.size() + " prime:");
+		System.out.println(result);
+
+	}
+
+}
+
+class Range {
+	public final int lowerBound;
+	public final int upperBound;
+
+	public Range(int lowerBound, int upperBound) {
+		if (upperBound < lowerBound) {
+			throw new IllegalArgumentException(
+			    "upperBound should not be less than lowerBound!");
+		}
+		this.lowerBound = lowerBound;
+		this.upperBound = upperBound;
+	}
+
+	@Override
+	public String toString() {
+		return "Range [" + lowerBound + ", " + upperBound + "]";
+	}
+
+}
+
+/*
+ * 质数生成器服务。 模式角色：Master-Slave.Master
+ */
+class PrimeGeneratorService extends
+    AbstractMaster<Range, Set<BigInteger>, Set<BigInteger>> {
+
+	public PrimeGeneratorService() {
+		this.init();
+	}
+
+	// 创建子任务分解算法实现类
+	@Override
+	protected TaskDivideStrategy<Range> newTaskDivideStrategy(
+	    final Object... params) {
+
+		final int numOfSlaves = slaves.size();
+		final int originalTaskScale = (Integer) params[0];
+		final int subTaskScale = originalTaskScale / numOfSlaves;
+		final int subTasksCount = (0 == (originalTaskScale % numOfSlaves)) ? numOfSlaves
+		    : numOfSlaves + 1;
+
+		TaskDivideStrategy<Range> tds = new TaskDivideStrategy<Range>() {
+			private int i = 1;
+
+			@Override
+			public Range nextChunk() {
+				int upperBound;
+				if (i < subTasksCount) {
+					upperBound = i * subTaskScale;
+				} else if (i == subTasksCount) {
+					upperBound = originalTaskScale;
+				} else {
+					return null;
+				}
+
+				int lowerBound = (i - 1) * subTaskScale + 1;
+				i++;
+
+				return new Range(lowerBound, upperBound);
+			}
+
+		};
+		return tds;
+	}
+
+	// 创建Slave线程
+	@Override
+	protected Set<? extends SlaveSpec<Range, Set<BigInteger>>> createSlaves() {
+		Set<PrimeGenerator> slaves = new HashSet<PrimeGenerator>();
+		for (int i = 0; i < Runtime.getRuntime().availableProcessors(); i++) {
+			slaves.add(new PrimeGenerator(new ArrayBlockingQueue<Runnable>(2)));
+		}
+		return slaves;
+	}
+
+	// 组合子任务的处理结果
+	@Override
+	protected Set<BigInteger> combineResults(
+	    Iterator<Future<Set<BigInteger>>> subResults) {
+
+		Set<BigInteger> result = new TreeSet<BigInteger>();
+
+		while (subResults.hasNext()) {
+
+			try {
+				result.addAll(subResults.next().get());
+			} catch (InterruptedException e) {
+				e.printStackTrace();
+			} catch (ExecutionException e) {
+				Throwable cause = e.getCause();
+				if (SubTaskFailureException.class.isInstance(cause)) {
+					@SuppressWarnings("rawtypes")
+					RetryInfo retryInfo = ((SubTaskFailureException) cause).retryInfo;
+					Object subTask = retryInfo.subTask;
+					Debug.info("failed subTask:" + subTask);
+					e.printStackTrace();
+				}
+			}
+
+		}
+
+		return result;
+
+	}
+
+	// 使Master子类对外保留一个含义具体的方法名
+	public Set<BigInteger> generatePrime(int upperBound) throws Exception {
+		return this.service(upperBound);
+	}
+
+	/*
+	 * 质数生成器。 模式角色：Master-Slave.Slave
+	 */
+	private static class PrimeGenerator extends
+	    WorkerThreadSlave<Range, Set<BigInteger>> {
+
+		public PrimeGenerator(BlockingQueue<Runnable> taskQueue) {
+			super(taskQueue);
+		}
+
+		@Override
+		protected Set<BigInteger> doProcess(Range range) throws Exception {
+
+			Set<BigInteger> result = new TreeSet<BigInteger>();
+			BigInteger start = BigInteger.valueOf(range.lowerBound);
+			BigInteger end = BigInteger.valueOf(range.upperBound);
+
+			while (-1 == (start = start.nextProbablePrime()).compareTo(end)) {
+				result.add(start);
+			}
+
+			return result;
+		}
+
+	}
+
+}
+```
+
+#### Pipeline模式
+
+将一个任务分解为若干个处理阶段，每个处理阶段的输出作为下一个处理阶段的输入，并且各个处理阶段都有相应的工作者线程去执行相应的计算。
+
+##### 可复用代码
+
+```
+/**
+ * 对处理阶段的抽象。 负责对其输入进行处理，并将其输出作为下一个处理阶段的输入。
+ *
+ * @param <IN>
+ *            输入类型
+ * @param <OUT>
+ *            输出类型
+ */
+public interface Pipe<IN, OUT> {
+    /**
+     * 设置当前Pipe实例的下一个Pipe实例。
+     * 
+     * @param nextPipe
+     *            下一个Pipe实例
+     */
+    void setNextPipe(Pipe<?, ?> nextPipe);
+
+    /**
+     * 初始化当前Pipe实例对外提供的服务。
+     * 
+     * @param pipeCtx
+     */
+    void init(PipeContext pipeCtx);
+
+    /**
+     * 停止当前Pipe实例对外提供的服务。
+     * 
+     * @param timeout
+     * @param unit
+     */
+    void shutdown(long timeout, TimeUnit unit);
+
+    /**
+     * 对输入元素进行处理，并将处理结果作为下一个Pipe实例的输入。
+     */
+    void process(IN input) throws InterruptedException;
+}
+```
+
+```
+/**
+ * Pipe的抽象实现类。 该类会调用其子类实现的doProcess方法对输入元素进行处理。并将相应的输出作为 下一个Pipe实例的输入。
+ *
+ * @param <IN>
+ *            输入类型
+ * @param <OUT>
+ *            输出类型
+ */
+public abstract class AbstractPipe<IN, OUT> implements Pipe<IN, OUT> {
+    protected volatile Pipe<?, ?> nextPipe = null;
+    protected volatile PipeContext pipeCtx;
+
+    @Override
+    public void init(PipeContext pipeCtx) {
+        this.pipeCtx = pipeCtx;
+
+    }
+
+    @Override
+    public void setNextPipe(Pipe<?, ?> nextPipe) {
+        this.nextPipe = nextPipe;
+
+    }
+
+    @Override
+    public void shutdown(long timeout, TimeUnit unit) {
+        // 什么也不做
+    }
+
+    /**
+     * 留给子类实现。用于子类实现其任务处理逻辑。
+     * 
+     * @param input
+     *            输入元素（任务）
+     * @return 任务的处理结果
+     * @throws PipeException
+     */
+    protected abstract OUT doProcess(IN input) throws PipeException;
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public void process(IN input) throws InterruptedException {
+        try {
+            OUT out = doProcess(input);
+            if (null != nextPipe) {
+                if (null != out) {
+                    ((Pipe<OUT, ?>) nextPipe).process(out);
+                }
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (PipeException e) {
+            pipeCtx.handleError(e);
+        } catch (Exception e1) {
+            pipeCtx.handleError(new PipeException(this, input, "", e1));
+        }
+    }
+}
+```
+
+```
+/**
+ * 基于工作者线程的Pipe实现类。 提交到该Pipe的任务由指定个数的工作者线程共同处理。
+ *
+ * @param <IN>
+ *            输入类型
+ * @param <OUT>
+ *            输出类型
+ */
+public class WorkerThreadPipeDecorator<IN, OUT> implements Pipe<IN, OUT> {
+    protected final BlockingQueue<IN> workQueue;
+    private final Set<AbstractTerminatableThread> workerThreads = new HashSet<AbstractTerminatableThread>();
+    private final TerminationToken terminationToken = new TerminationToken();
+
+    private final Pipe<IN, OUT> delegate;
+
+    public WorkerThreadPipeDecorator(Pipe<IN, OUT> delegate, int workerCount) {
+        this(new SynchronousQueue<IN>(), delegate, workerCount);
+    }
+
+    public WorkerThreadPipeDecorator(BlockingQueue<IN> workQueue,
+            Pipe<IN, OUT> delegate, int workerCount) {
+        if (workerCount <= 0) {
+            throw new IllegalArgumentException(
+                    "workerCount should be positive!");
+        }
+
+        this.workQueue = workQueue;
+
+        this.delegate = delegate;
+        for (int i = 0; i < workerCount; i++) {
+            workerThreads.add(new AbstractTerminatableThread(terminationToken) {
+                @Override
+                protected void doRun() throws Exception {
+                    try {
+                        dispatch();
+                    } finally {
+                        terminationToken.reservations.decrementAndGet();
+                    }
+                }
+            });
+        }
+
+    }
+
+    protected void dispatch() throws InterruptedException {
+        IN input = workQueue.take();
+        delegate.process(input);
+    }
+
+    @Override
+    public void init(PipeContext pipeCtx) {
+        delegate.init(pipeCtx);
+        for (AbstractTerminatableThread thread : workerThreads) {
+            thread.start();
+        }
+    }
+
+    @Override
+    public void process(IN input) throws InterruptedException {
+        workQueue.put(input);
+        terminationToken.reservations.incrementAndGet();
+    }
+
+    @Override
+    public void shutdown(long timeout, TimeUnit unit) {
+        for (AbstractTerminatableThread thread : workerThreads) {
+            thread.terminate();
+            try {
+                thread.join(TimeUnit.MILLISECONDS.convert(timeout, unit));
+            } catch (InterruptedException e) {
+            }
+        }
+        delegate.shutdown(timeout, unit);
+    }
+
+    @Override
+    public void setNextPipe(Pipe<?, ?> nextPipe) {
+        delegate.setNextPipe(nextPipe);
+    }
+
+}
+```
+
+```
+/**
+ * 基于线程池的Pipe实现类。
+ *
+ * @param <IN>
+ *          输入类型
+ * @param <OUT>
+ *          输出类型
+ */
+public class ThreadPoolPipeDecorator<IN, OUT> implements Pipe<IN, OUT> {
+	private final Pipe<IN, OUT> delegate;
+	private final ExecutorService executorSerivce;
+	
+	//线程池停止标志。
+	private final TerminationToken terminationToken;
+	private final CountDownLatch stageProcessDoneLatch = new CountDownLatch(1);
+
+	public ThreadPoolPipeDecorator(Pipe<IN, OUT> delegate,
+	    ExecutorService executorSerivce) {
+		this.delegate = delegate;
+		this.executorSerivce = executorSerivce;
+		this.terminationToken = TerminationToken.newInstance(executorSerivce);
+	}
+
+	@Override
+	public void init(PipeContext pipeCtx) {
+		delegate.init(pipeCtx);
+
+	}
+
+	@Override
+	public void process(final IN input) throws InterruptedException {
+
+		Runnable task = new Runnable() {
+			@Override
+			public void run() {
+				int remainingReservations = -1;
+				try {
+					delegate.process(input);
+				} catch (InterruptedException e) {
+					;
+				} finally {
+					remainingReservations = terminationToken.reservations
+					    .decrementAndGet();
+				}
+
+				if (terminationToken.isToShutdown() && 0 == remainingReservations) {
+					stageProcessDoneLatch.countDown();
+				}
+			}
+
+		};
+
+		executorSerivce.submit(task);
+
+		terminationToken.reservations.incrementAndGet();
+
+	}
+
+	@Override
+	public void shutdown(long timeout, TimeUnit unit) {
+		terminationToken.setIsToShutdown();
+
+		if (terminationToken.reservations.get() > 0) {
+			try {
+				if (stageProcessDoneLatch.getCount() > 0) {
+					stageProcessDoneLatch.await(timeout, unit);
+				}
+			} catch (InterruptedException e) {
+				;
+			}
+		}
+		
+		delegate.shutdown(timeout, unit);
+	}
+
+	@Override
+	public void setNextPipe(Pipe<?, ?> nextPipe) {
+		delegate.setNextPipe(nextPipe);
+	}
+
+	/**
+	 * 线程池停止标志。
+	 * 每个ExecutorService实例对应唯一的一个TerminationToken实例。
+	 * 这里使用了Two-phase Termination模式（第5章）的思想来停止多个Pipe实例所共用的
+	 * 线程池实例。
+	 * @author Viscent Huang
+	 *
+	 */
+	private static class TerminationToken extends
+	    io.github.viscent.mtpattern.ch5.tpt.TerminationToken {
+		private final static ConcurrentMap<ExecutorService, TerminationToken> 
+					INSTANCES_MAP 
+					= new ConcurrentHashMap<ExecutorService, TerminationToken>();
+
+		// 私有构造器
+		private TerminationToken() {
+
+		}
+
+		void setIsToShutdown() {
+			this.toShutdown = true;
+		}
+
+		static TerminationToken newInstance(ExecutorService executorSerivce) {
+			TerminationToken token = INSTANCES_MAP.get(executorSerivce);
+			if (null == token) {
+				token = new TerminationToken();
+				TerminationToken existingToken = INSTANCES_MAP.putIfAbsent(
+				    executorSerivce, token);
+				if (null != existingToken) {
+					token = existingToken;
+				}
+			}
+			return token;
+		}
+	}
+
+}
+```
+
+```
+/**
+ * 支持并行处理的Pipe实现类。 该类对其每个输入元素生成一组子任务，并以并行的方式去执行这些子任务。
+ * 各个子任务的执行结果会被合并为相应输入元素的输出结果。
+ * 
+ *
+ * @param <IN>
+ *            输入类型
+ * @param <OUT>
+ *            输出类型
+ * 
+ * @param <V>
+ *            并行子任务的处理结果类型
+ */
+public abstract class AbstractParallelPipe<IN, OUT, V> extends
+        AbstractPipe<IN, OUT> {
+    private final ExecutorService executorService;
+
+    public AbstractParallelPipe(BlockingQueue<IN> queue,
+            ExecutorService executorService) {
+        super();
+        this.executorService = executorService;
+    }
+
+    /**
+     * 留给子类实现。用于根据指定的输入元素input构造一组子任务。
+     * 
+     * @param input
+     *            输入元素
+     * @param <V>
+     *            子任务的处理结果类型
+     * @return 一组子任务
+     */
+    protected abstract List<Callable<V>> buildTasks(IN input) throws Exception;
+
+    /**
+     * 留给子类实现。对各个子任务的处理结果进行合并，形成相应输入元素的输出结果。
+     * 
+     * @param subTaskResults
+     *            子任务处理结果列表
+     * @return 相应输入元素的处理结果
+     * @throws Exception
+     */
+    protected abstract OUT combineResults(List<Future<V>> subTaskResults)
+            throws Exception;
+
+    /**
+     * 以并行的方式执行一组子任务。
+     * 
+     * @param tasks
+     *            一组子任务
+     * @return 一组可以借以获取并行任务中的各个任务的处理结果的Promise（参见第6章，Promise模式）实例。
+     */
+    protected List<Future<V>> invokeParallel(List<Callable<V>> tasks)
+            throws Exception {
+        return executorService.invokeAll(tasks);
+    }
+
+    @Override
+    protected OUT doProcess(final IN input) throws PipeException {
+        OUT out = null;
+        try {
+            out = combineResults(invokeParallel(buildTasks(input)));
+        } catch (Exception e) {
+            throw new PipeException(this, input, "Task failed", e);
+        }
+        return out;
+    }
+
+}
+```
+
+```
+/**
+ * 对复合Pipe的抽象。 一个Pipeline实例可包含多个Pipe实例。
+ *
+ * @param <IN>
+ *          输入类型
+ * @param <OUT>
+ *          输出类型
+ */
+public interface Pipeline<IN, OUT> extends Pipe<IN, OUT> {
+
+	/**
+	 * 往该Pipeline实例中添加一个Pipe实例。
+	 * 
+	 * @param pipe
+	 *          Pipe实例
+	 */
+	void addPipe(Pipe<?, ?> pipe);
+}
+```
+
+```
+public class SimplePipeline<T, OUT> extends AbstractPipe<T, OUT> implements
+        Pipeline<T, OUT> {
+    private final static Logger logger = Logger.getLogger(SimplePipeline.class);
+    private final Queue<Pipe<?, ?>> pipes = new LinkedList<Pipe<?, ?>>();
+
+    private final ExecutorService helperExecutor;
+
+    public SimplePipeline() {
+        this(Executors.newSingleThreadExecutor(new ThreadFactory() {
+
+            @Override
+            public Thread newThread(Runnable r) {
+                Thread t = new Thread(r, "SimplePipeline-Helper");
+                t.setDaemon(true);
+                return t;
+            }
+
+        }));
+
+    }
+
+    public SimplePipeline(final ExecutorService helperExecutor) {
+        super();
+        this.helperExecutor = helperExecutor;
+    }
+
+    @Override
+    public void shutdown(long timeout, TimeUnit unit) {
+        Pipe<?, ?> pipe;
+
+        while (null != (pipe = pipes.poll())) {
+            pipe.shutdown(timeout, unit);
+        }
+
+        helperExecutor.shutdown();
+
+    }
+
+    @Override
+    protected OUT doProcess(T input) throws PipeException {
+        // 什么也不做
+        return null;
+    }
+
+    @Override
+    public void addPipe(Pipe<?, ?> pipe) {
+
+        // Pipe间的关联关系在init方法中建立
+        pipes.add(pipe);
+    }
+
+    public <INPUT, OUTPUT> void addAsWorkerThreadBasedPipe(
+            Pipe<INPUT, OUTPUT> delegate, int workerCount) {
+        addPipe(new WorkerThreadPipeDecorator<INPUT, OUTPUT>(delegate,
+                workerCount));
+    }
+
+    public <INPUT, OUTPUT> void addAsThreadPoolBasedPipe(
+            Pipe<INPUT, OUTPUT> delegate, ExecutorService executorSerivce) {
+        addPipe(new ThreadPoolPipeDecorator<INPUT, OUTPUT>(delegate,
+                executorSerivce));
+    }
+
+    @Override
+    public void process(T input) throws InterruptedException {
+        @SuppressWarnings("unchecked")
+        Pipe<T, ?> firstPipe = (Pipe<T, ?>) pipes.peek();
+
+        firstPipe.process(input);
+    }
+
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    @Override
+    public void init(final PipeContext ctx) {
+        LinkedList<Pipe<?, ?>> pipesList = (LinkedList<Pipe<?, ?>>) pipes;
+        Pipe<?, ?> prevPipe = this;
+        for (Pipe<?, ?> pipe : pipesList) {
+            prevPipe.setNextPipe(pipe);
+            prevPipe = pipe;
+        }
+        helperExecutor.submit(new PipeInitTask(ctx, (List) pipes));
+    }
+
+    static class PipeInitTask implements Runnable {
+        final List<Pipe<?, ?>> pipes;
+        final PipeContext ctx;
+
+        public PipeInitTask(PipeContext ctx, List<Pipe<?, ?>> pipes) {
+            this.pipes = pipes;
+            this.ctx = ctx;
+        }
+
+        @Override
+        public void run() {
+            try {
+                for (Pipe<?, ?> pipe : pipes) {
+                    pipe.init(ctx);
+                }
+            } catch (Exception e) {
+                logger.error("Failed to init pipe", e);
+            }
+        }
+
+    }
+
+    public PipeContext newDefaultPipelineContext() {
+        return new PipeContext() {
+            @Override
+            public void handleError(final PipeException exp) {
+                helperExecutor.submit(new Runnable() {
+                    @Override
+                    public void run() {
+                        logger.error("", exp);
+                    }
+                });
+            }
+
+        };
+    }
+}
+```
+
+```
+/**
+ * 对各个处理阶段的计算环境进行抽象，主要用于异常处理。
+ *
+ */
+public interface PipeContext {
+	/**
+	 * 用于对处理阶段抛出的异常进行处理.
+	 * 
+	 * @param exp
+	 */
+	void handleError(PipeException exp);
+}
+```
+
+```
+public class PipeException extends Exception {
+	private static final long serialVersionUID = -2944728968269016114L;
+	/**
+	 * 抛出异常的Pipe实例。
+	 */
+	public final Pipe<?, ?> sourcePipe;
+	
+	/**
+	 * 抛出异常的Pipe实例在抛出异常时所处理的输入元素。
+	 */
+	public final Object input;
+
+	public PipeException(Pipe<?, ?> sourcePipe, Object input, String message) {
+		super(message);
+		this.sourcePipe = sourcePipe;
+		this.input = input;
+	}
+
+	public PipeException(Pipe<?, ?> sourcePipe, Object input, String message,
+	    Throwable cause) {
+		super(message, cause);
+		this.sourcePipe = sourcePipe;
+		this.input = input;
+	}
+}
+```
+
+##### 使用示例
+
++ 创建Pipeline实例。
++ 创建表示各个处理阶段的Piple实例，并添加到Pipeline实例中。
++ 初始化Pipeline实例。
+
+```
+public class DataSyncTask implements Runnable {
+    private final Properties config;
+
+    public DataSyncTask(Properties config) {
+        this.config = config;
+    }
+
+    @Override
+    public void run() {
+        /*
+         * 创建并初始化Pipeline实例。
+         * SimplePipeline类的源码参见清单13-9。接口RecordSaveTask的源码见本书的配套下载。
+         */
+        SimplePipeline<RecordSaveTask, String> pipeline = buildPipeline();
+        pipeline.init(pipeline.newDefaultPipelineContext());
+
+        // 接口RecordSource的源码见本书的配套下载
+        try {
+            // 创建数据源
+            RecordSource recordSource = makeRecordSource(this.config);
+
+            // 使用Pipeline来处理数据记录
+            processRecords(recordSource, pipeline);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        pipeline.shutdown(360, TimeUnit.SECONDS);
+    }
+
+    protected RecordSource makeRecordSource(Properties config)
+            throws Exception {
+        // DbRecordSource类的源码见本书的配套下载
+        return new DbRecordSource(config);
+    }
+
+    private SimplePipeline<RecordSaveTask, String> buildPipeline() {
+        /*
+         * 线程池的本质是重复利用一定数量的线程，而不是针对每个任务都有一个专门的工作者线程。
+         * 这里，各个Pipe的初始化话完全可以在上游Pipe初始化完毕后再初始化其后继Pipe，而不必多个Pipe同时初始化。
+         * 因此，这个初始化的动作可以由一个线程来处理。该线程处理完各个Pipe的初始化后，可以继续处理之后可能产生的任务， 如错误处理。
+         * 所以，上述这些先后产生的任务可以由线程池中的一个工作者线程从头到尾负责执行。
+         * 
+         * 由于这里的几个Pipe都是处理I/O的，为了避免使用锁（以减少不必要的上下文切换） 但又能保证线程安全，故每个Pipe都采用单线程处理。
+         * 若各个Pipe要改用线程池来处理，需要注意：1）线程安全 2）死锁
+         */
+        final ExecutorService helperExecutor =
+                Executors.newSingleThreadExecutor();
+        final SimplePipeline<RecordSaveTask, String> pipeline =
+                new SimplePipeline<>(helperExecutor);
+
+        /*
+         * 根据数据库记录生成相应的数据文件。 Pipe接口的源码参见清单13-3。
+         */
+        Pipe<RecordSaveTask, File> stageSaveFile = createFileSaveStage();
+        pipeline.addAsWorkerThreadBasedPipe(stageSaveFile, 1);
+
+        // 将生成的数据文件传输到指定的主机上。
+        Pipe<File, File> stageTransferFile = createFileTransferStage();
+        pipeline.addAsWorkerThreadBasedPipe(stageTransferFile, 1);
+
+        // 备份已经传输的数据文件
+        Pipe<File, Void> stageBackupFile = createFileBackupStage();
+        pipeline.addAsWorkerThreadBasedPipe(stageBackupFile, 1);
+
+        return pipeline;
+    }
+
+    private Pipe<RecordSaveTask, File> createFileSaveStage() {
+        Pipe<RecordSaveTask, File> ret;
+        // AbstractPipe类的源码参见清单13-4
+        ret = new AbstractPipe<RecordSaveTask, File>() {
+
+            @Override
+            protected File doProcess(RecordSaveTask task)
+                    throws PipeException {
+                /*
+                 * 将记录写入文件。 RecordSaveTask类的源码参见本书配套下载。
+                 */
+                File file;
+                final RecordWriter recordWriter = RecordWriter.getInstance();
+                final Record[] records = task.records;
+                if (null == records) {
+                    file = recordWriter.finishRecords(task.recordDay,
+                            task.targetFileIndex);
+                } else {
+                    try {
+                        file = recordWriter.write(records,
+                                task.targetFileIndex);
+                    } catch (IOException e) {
+                        throw new PipeException(this, task,
+                                "Failed to save records.", e);
+                    }
+                }
+                return file;
+            }
+        };
+        return ret;
+    }
+
+    protected Pipe<File, File> createFileTransferStage() {
+        Pipe<File, File> ret;
+        final String[][] ftpServerConfigs = retrieveFTPServConf();
+
+        final ThreadPoolExecutor ftpExecutorService = new ThreadPoolExecutor(1,
+                ftpServerConfigs.length, 60, TimeUnit.SECONDS,
+                new ArrayBlockingQueue<Runnable>(100),
+                new ReEnqueueRejectedExecutionHandler());
+
+        final String ftpServerDir = this.config.getProperty("ftp.serverdir");
+
+        // AbstractParallelPipe类的源码参见清单13-7
+        ret = new AbstractParallelPipe<File, File, File>(
+                        new SynchronousQueue<File>(), ftpExecutorService) {
+            @SuppressWarnings("unchecked")
+                    final Future<FTPUploader>[] ftpClientUtilHolders =
+                            new Future[ftpServerConfigs.length];
+
+            @Override
+            public void init(PipeContext pipeCtx) {
+                super.init(pipeCtx);
+                String[] ftpServerConfig;
+                for (int i = 0; i < ftpServerConfigs.length; i++) {
+                    ftpServerConfig = ftpServerConfigs[i];
+                            // FTPUploaderPromisor类的源码参见清单6-2
+                            ftpClientUtilHolders[i] =
+                                    FTPUploaderPromisor.newFTPUploaderPromise(
+                                            ftpServerConfig[0],
+                                            ftpServerConfig[1],
+                            ftpServerConfig[2], ftpServerDir,
+                            ftpExecutorService);
+                }
+            }
+
+            @Override
+            protected List<Callable<File>> buildTasks(final File file) {
+                        // 创建一组并发任务，这些任务将指定的文件上传到FTP服务器上
+                        List<Callable<File>> tasks = new LinkedList<>();
+                for (Future<FTPUploader> ftpClientUtilHolder 
+                        : ftpClientUtilHolders) {
+                    tasks.add(new FileTransferTask(ftpClientUtilHolder, file));
+                }
+                return tasks;
+            }
+
+            @Override
+            protected File combineResults(List<Future<File>> subTaskResults)
+                    throws Exception {
+                if (0 == subTaskResults.size()) {
+                    return null;
+                }
+                File file = subTaskResults.get(0).get();
+                return file;
+            }
+
+            @Override
+            public void shutdown(long timeout, TimeUnit unit) {
+                super.shutdown(timeout, unit);
+                ftpExecutorService.shutdown();
+                try {
+                    ftpExecutorService.awaitTermination(timeout, unit);
+                } catch (InterruptedException e1) {
+                    ;
+                }
+                for (Future<FTPUploader> ftpClientUtilHolder 
+                        : ftpClientUtilHolders) {
+                    try {
+                        ftpClientUtilHolder.get().disconnect();
+                    } catch (Exception e) {
+                        ;
+                    }
+                } // end of for
+            }// end of shutdown
+        };
+        return ret;
+    }
+
+    private Pipe<File, Void> createFileBackupStage() {
+        Pipe<File, Void> ret;
+        ret = new AbstractPipe<File, Void>() {
+            @Override
+            protected Void doProcess(File transferedFile)
+                    throws PipeException {
+                // 备份已传输完毕的文件
+                RecordWriter.backupFile(transferedFile);
+                return null;
+            }
+
+            @Override
+            public void shutdown(long timeout, TimeUnit unit) {
+                // 所有文件备份完毕后，清理掉空文件夹
+                RecordWriter.purgeDir();
+            }
+
+        };
+        return ret;
+    }
+
+    protected String[][] retrieveFTPServConf() {
+        String serverList = this.config.getProperty("ftp.servers");
+        String[] arr = serverList.split(";");
+        String[][] ftpServerConfigs = new String[arr.length][];
+        for (int i = 0; i < arr.length; i++) {
+            String server = arr[i];
+            String[] parts = server.split(",");
+            ftpServerConfigs[i] = parts;
+        }
+        return ftpServerConfigs;
+    }
+
+    private void processRecords(RecordSource recordSource,
+            Pipeline<RecordSaveTask, String> pipeline) throws Exception {
+        Record record;
+        Record[] records = new Record[Config.RECORD_SAVE_CHUNK_SIZE];
+        int targetFileIndex = 0;
+        int nextTargetFileIndex = 0;
+        int recordCountInTheDay = 0;
+        int recordCountInTheFile = 0;
+        String recordDay = null;
+        String lastRecordDay = null;
+        SimpleDateFormat sdf = new SimpleDateFormat("yyMMdd");
+
+        while (recordSource.hasNext()) {
+            record = recordSource.next();
+            lastRecordDay = recordDay;
+            recordDay = sdf.format(record.getOperationTime());
+            if (recordDay.equals(lastRecordDay)) {
+                records[recordCountInTheFile] = record;
+                recordCountInTheDay++;
+            } else {
+                // 实际已发生的不同日期记录文件切换
+                if (null != lastRecordDay) {
+                    if (recordCountInTheFile >= 1) {
+                        pipeline.process(new RecordSaveTask(
+                                Arrays.copyOf(records, recordCountInTheFile),
+                                targetFileIndex));
+                    } else {
+                        pipeline.process(new RecordSaveTask(lastRecordDay,
+                                targetFileIndex));
+                    }
+
+                    // 在此之前，先将records中的内容写入文件
+                    records[0] = record;
+                    recordCountInTheFile = 0;
+                } else {
+                    // 直接赋值
+                    records[0] = record;
+                }
+                recordCountInTheDay = 1;
+            }
+
+            if (nextTargetFileIndex == targetFileIndex) {
+                recordCountInTheFile++;
+                if (0 == (recordCountInTheFile
+                        % Config.RECORD_SAVE_CHUNK_SIZE)) {
+                    pipeline.process(new RecordSaveTask(
+                            Arrays.copyOf(records, recordCountInTheFile),
+                            targetFileIndex));
+                    recordCountInTheFile = 0;
+                }
+            }
+
+            nextTargetFileIndex = (recordCountInTheDay)
+                    / Config.MAX_RECORDS_PER_FILE;
+            if (nextTargetFileIndex > targetFileIndex) {
+                // 预测到将发生同日期记录文件切换
+                if (recordCountInTheFile > 1) {
+                    pipeline.process(new RecordSaveTask(
+                            Arrays.copyOf(records, recordCountInTheFile),
+                            targetFileIndex));
+                } else {
+                    pipeline.process(
+                            new RecordSaveTask(recordDay, targetFileIndex));
+                }
+                recordCountInTheFile = 0;
+                targetFileIndex = nextTargetFileIndex;
+            } else if (nextTargetFileIndex < targetFileIndex) {
+                // 实际已发生的异日期记录文件切换,recordCountInTheFile保持当前值
+                targetFileIndex = nextTargetFileIndex;
+            }
+        } // end of while
+
+        if (recordCountInTheFile > 0) {
+            pipeline.process(new RecordSaveTask(
+                    Arrays.copyOf(records, recordCountInTheFile),
+                    targetFileIndex));
+        }
+    }
+}
+```
+
+#### Hasf-sync/Half-async模式
+
+Hasf-sync/Half-async模式是个分层架构，包含了：
+
++ 异步任务层：耗时短，及时返回给调用方
++ 队列层：积压后台任务
++ 同步任务层：后台处理
+
+#### 可复用代码
+
+```
+public abstract class AsyncTask<V> {
+
+    // 相当于Half-sync/Half-async模式的同步层：用于执行异步层提交的任务
+    private volatile Executor executor;
+    private final static ExecutorService DEFAULT_EXECUTOR;
+
+    static {
+        DEFAULT_EXECUTOR = new ThreadPoolExecutor(1, 1, 8, TimeUnit.HOURS,
+                new LinkedBlockingQueue<Runnable>(), new ThreadFactory() {
+
+                    @Override
+                    public Thread newThread(Runnable r) {
+                        Thread thread = new Thread(r, "AsyncTaskDefaultWorker");
+                                // 使该线程在Java虚拟机关闭时自动停止
+                        thread.setDaemon(true);
+                        return thread;
+                    }
+
+                }, /**
+                    * 该RejectedExecutionHandler支持重试。 当任务被ThreadPoolExecutor拒绝时，
+                    * 该RejectedExecutionHandler支持 重新将任务放入ThreadPoolExecutor
+                    * 的工作队列（这意味着，此时客户端代码 需要等待ThreadPoolExecutor的队列非满）。
+                    */
+                new ReEnqueueRejectedExecutionHandler());
+    }
+
+    public AsyncTask(Executor executor) {
+        this.executor = executor;
+    }
+
+    public AsyncTask() {
+        this(DEFAULT_EXECUTOR);
+    }
+
+    public void setExecutor(Executor executor) {
+        this.executor = executor;
+    }
+
+    /**
+     * 留给子类实现耗时较短的任务，默认实现什么也不做。
+     * 
+     * @param params
+     *            客户端代码调用dispatch方法时所传递的参数列表
+     */
+    protected void onPreExecute(Object... params) {
+        // 什么也不做
+    }
+
+    /**
+     * 留给子类实现。用于实现同步任务执行结束后所需执行的操作。 默认实现什么也不做。
+     * 
+     * @param result
+     *            同步任务的处理结果
+     */
+    protected void onPostExecute(V result) {
+        // 什么也不做
+    }
+
+    protected void onExecutionError(Exception e) {
+        e.printStackTrace();
+    }
+
+    /**
+     * 留给子类实现耗时较长的任务（同步任务），由后台线程负责调用。
+     * 
+     * @param params
+     *            客户端代码调用dispatch方法时所传递的参数列表
+     * @return 同步任务的处理结果
+     */
+    protected abstract V doInBackground(Object... params);
+
+    /**
+     * 对外（其子类）暴露的服务方法。 该类的子类需要定义一个比该方法命名更为具体的服务方法（如downloadLargeFile）。
+     * 该命名具体的服务方法（如downloadLargeFile）可直接调用该方法。
+     * 
+     * @param params
+     *            客户端代码传递的参数列表
+     * @return 可借以获取任务处理结果的Promise（参见第6章，Promise模式）实例。
+     */
+    protected Future<V> dispatch(final Object... params) {
+        FutureTask<V> ft = null;
+
+        // 进行异步层初步处理
+        onPreExecute(params);
+
+        Callable<V> callable = new Callable<V>() {
+            @Override
+            public V call() throws Exception {
+                V result;
+                result = doInBackground(params);
+                return result;
+            }
+
+        };
+
+        ft = new FutureTask<V>(callable) {
+
+            @Override
+            protected void done() {
+                try {
+                    onPostExecute(this.get());
+                } catch (InterruptedException e) {
+                    onExecutionError(e);
+                } catch (ExecutionException e) {
+                    onExecutionError(e);
+                }
+            }
+
+        };
+
+        // 提交任务到同步层处理
+        executor.execute(ft);
+
+        return ft;
+    }
+
+}
+```
+
+##### 使用实例
+
++ 定义一个具体含义的执行方法，该方法可直接调用父类的dispatch()。
++ 实现父类的抽象方法doInBackground()。
++ 可按需覆盖父类的onPreExecute()、onPostExecute、onExecutionException()。
+
+```
+public class SampleAsyncTask {
+
+    public static void main(String[] args) {
+        XAsyncTask task = new XAsyncTask();
+        List<Future<String>> results = new LinkedList<Future<String>>();
+
+        try {
+            results.add(task.doSomething("Half-sync/Half-async", 1));
+
+            results.add(task.doSomething("Pattern", 2));
+
+            for (Future<String> result : results) {
+                Debug.info(result.get());
+            }
+
+            Thread.sleep(200);
+        } catch (Exception e) {
+
+            e.printStackTrace();
+        }
+
+    }
+
+    private static class XAsyncTask extends AsyncTask<String> {
+
+        @Override
+        protected String doInBackground(Object... params) {
+            String message = (String) params[0];
+            int sequence = (Integer) params[1];
+            Debug.info("doInBackground:" + message);
+            return "message " + sequence + ":" + message;
+        }
+
+        @Override
+        protected void onPreExecute(Object... params) {
+            String message = (String) params[0];
+            int sequence = (Integer) params[1];
+            Debug.info("onPreExecute:[" + sequence + "]" + message);
+        }
+
+        public Future<String> doSomething(String message, int sequence) {
+            if (sequence < 0) {
+                throw new IllegalArgumentException(
+                        "Invalid sequence:" + sequence);
+            }
+            return this.dispatch(message, sequence);
+        }
+    }
+}
+```
+
 ### 高性能限流器Guava RateLimiter
 
 #### 令牌桶算法
