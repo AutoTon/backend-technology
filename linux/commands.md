@@ -177,6 +177,14 @@ cat -n /var/log/messages
 lsb_release -a
 ```
 
+### 7.4 发送公钥
+
+```
+sshpass -p <password> ssh-copy-id -p <port> -i ~/.ssh/id_rsa.pub -o StrictHostKeyChecking=no <user>@<ip>
+```
+
+其中，`sshpass`可传递密码以避免交互式输入，`StrictHostKeyChecking=no`自动应答ssh连接的`yes`。
+
 ## 8 SHELL
 
 ### 判断语法
