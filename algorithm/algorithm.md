@@ -110,7 +110,13 @@ public class Queue {
 
 # 排序算法
 
-## 直接插入排序
+## 稳定性
+
+排序前后相同值的元素顺序不变。
+
+## 直接插入排序（稳定）
+
+优先于冒泡排序，原因是移动较少。
 
 ```
 /**
@@ -172,7 +178,7 @@ public static void binarySort(int[] array) {
 }
 ```
 
-## 选择排序
+## 选择排序（不稳定）
 
 ```
 /**
@@ -194,7 +200,7 @@ private static void selectSort(int[] array) {
 }
 ```
 
-## 冒泡排序
+## 冒泡排序（稳定）
 
 ```
 private static void bubbleLowSort(int[] array) {
@@ -245,7 +251,7 @@ private static void shellSort(int[] array) {
 }
 ```
 
-## 快速排序
+## 快速排序（不稳定）
 
 ```
 private static void quickSort(int[] array) {
@@ -277,7 +283,7 @@ private static void quickSort(int[] array, int left, int right) {
 }
 ```
 
-## 归并排序
+## 归并排序（稳定）
 
 ```
 private static void mergeSort(int[] array) {
