@@ -29,7 +29,7 @@ public class ProcessUtils {
 			StringBuilder sb = new StringBuilder();
 			while ((line = br.readLine()) != null) {
 				LOGGER.debug(line);
-				sb.append(line + "\r\n");
+				sb.append(line).append("\r\n");
 			}
 			int exitValue = process.waitFor();
 			ProcessResult result = new ProcessResult();
@@ -44,7 +44,7 @@ public class ProcessUtils {
 		}
 	}
 
-    public static List<String> partitionCommandLine(final String command) {
+    private static List<String> partitionCommandLine(final String command) {
         final List<String> commands = new ArrayList<>(16);
 
         int index = 0;
@@ -131,29 +131,5 @@ public class ProcessUtils {
 		}
 
 	}
-}
-```
-
-## 生成随机字符串
-
-```
-public class RandomUtil {
-
-    /**
-     * 生成随机字符串
-     *
-     * @param length 生成的字符串长度
-     * @return 随机字符串
-     */
-    public static String generate(int length) {
-        String string = "0123456789";
-        StringBuilder stringBuilder = new StringBuilder();
-        for (int i = 0; i < length; i++) {
-            int index = (int) Math.floor(Math.random() * string.length());
-            stringBuilder.append(string.charAt(index));
-        }
-        return stringBuilder.toString();
-    }
-
 }
 ```
