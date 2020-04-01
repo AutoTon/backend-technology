@@ -279,6 +279,156 @@ public void delete(int data) {
 + 任何相邻的节点都不能同时为红色，也就是说，红色节点是被黑色节点隔开的。
 + 每个节点，从该节点到达其可达叶子节点的所有路径，都包含相同数目的黑色节点。
 
+## 堆
+
++ 堆是一个完全二叉树。
++ 堆中每一个节点的值都必须大于等于（或小于等于）其子树中每个节点的值。
+
+### 应用
+
+#### 优先级队列
+
+往优先级队列中插入一个元素，就相当于往堆中插入一个元素；从优先级队列中取出优先级最高的元素，就相当于取出堆顶元素。
+
+##### 合并有序小文件
+
+假设有100个小文件，每个文件的大小是100MB，每个文件中存储的都是有序的字符串。将这些100个小文件合并成一个有序的大文件。
+
+将从小文件中取出来的字符串放入到小顶堆中，那堆顶的元素，也就是优先级队列队首的元素，就是最小的字符串。我们将这个字符串放入到大文件中，并将其从堆中删除。然后再从小文件中取出下一个字符串，放入到堆中。循环这个过程，就可以将100个小文件中的数据依次放入到大文件中。
+
+#### 高性能定时器
+
+假设有一个定时器，定时器中维护了很多定时任务，每个任务都设定了一个要触发执行的时间点。定时器每过一个很小的单位时间（比如1秒），就扫描一遍任务，看是否有任务到达设定的执行时间。如果到达了，就拿出来执行。
+
+按照任务设定的执行时间，将这些任务存储在优先级队列中，队列首部（也就是小顶堆的堆顶）存储的是最先执行的任务。定时器拿队首任务的执行时间点，与当前时间点相减，得到一个时间间隔T。就可以设定在T秒之后，再来执行任务。从当前时间点到（T-1）秒这段时间里，定时器都不需要做任何事情。当 T 秒时间过去之后，定时器取优先级队列中队首的任务执行。然后再计算新的队首任务的执行时间点与当前时间点的差值，把这个值作为定时器执行下一个任务需要等待的时间。
+
+#### 求Top K
+
+维护一个大小为K的小顶堆，顺序遍历数组，从数组中取出数据与堆顶元素比较。如果比堆顶元素大，我们就把堆顶元素删除，并且将这个元素插入到堆中；如果比堆顶元素小，则不做处理，继续遍历数组。这样等数组中的数据都遍历完之后，堆中的数据就是前K大数据了。
+
+#### 求中位数
+
+维护两个堆，一个大顶堆，一个小顶堆。大顶堆中存储前半部分数据，小顶堆中存储后半部分数据，且小顶堆中的数据都大于大顶堆中的数据。
+
+##### 进阶--如何快速求接口的99%响应时间
+
+维护两个堆，一个大顶堆，一个小顶堆。假设当前总数据的个数是n，大顶堆中保存n*99%个数据，小顶堆中保存n*1%个数据。大顶堆堆顶的数据就是我们要找的99%响应时间。
+
+## 图
+
++ 顶点：图中的元素。
++ 边：顶点与其他顶点的连接。
++ 度：与顶点相连接的边的数量。
++ 入度：指向顶点的边的数量。（有向图）
++ 出度：顶点指向其他顶点的边的数量。（有向图）
+
+### 存储方法
+
+#### 邻接矩阵
+
+比较浪费存储空间。
+
+![](images/adjacency-matrix.jpg)
+
+#### 邻接表
+
+![](images/adjacency-list.jpg)
+
+### 代码实现
+
+```
+public class Graph { // 无向图
+  private int v; // 顶点的个数
+  private LinkedList<Integer> adj[]; // 邻接表
+
+  public Graph(int v) {
+    this.v = v;
+    adj = new LinkedList[v];
+    for (int i=0; i<v; ++i) {
+      adj[i] = new LinkedList<>();
+    }
+  }
+
+  public void addEdge(int s, int t) { // 无向图一条边存两次
+    adj[s].add(t);
+    adj[t].add(s);
+  }
+}
+```
+
+### 搜索算法
+
+#### 广度优先搜索算法
+
+```
+public void bfs(int s, int t) {
+  if (s == t) return;
+  boolean[] visited = new boolean[v];
+  visited[s]=true;
+  Queue<Integer> queue = new LinkedList<>();
+  queue.add(s);
+  int[] prev = new int[v];
+  for (int i = 0; i < v; ++i) {
+    prev[i] = -1;
+  }
+  while (queue.size() != 0) {
+    int w = queue.poll();
+   for (int i = 0; i < adj[w].size(); ++i) {
+      int q = adj[w].get(i);
+      if (!visited[q]) {
+        prev[q] = w;
+        if (q == t) {
+          print(prev, s, t);
+          return;
+        }
+        visited[q] = true;
+        queue.add(q);
+      }
+    }
+  }
+}
+
+private void print(int[] prev, int s, int t) { // 递归打印s->t的路径
+  if (prev[t] != -1 && t != s) {
+    print(prev, s, prev[t]);
+  }
+  System.out.print(t + " ");
+}
+```
+
+#### 深度优先搜索算法
+
+```
+boolean found = false; // 全局变量或者类成员变量
+
+public void dfs(int s, int t) {
+  found = false;
+  boolean[] visited = new boolean[v];
+  int[] prev = new int[v];
+  for (int i = 0; i < v; ++i) {
+    prev[i] = -1;
+  }
+  recurDfs(s, t, visited, prev);
+  print(prev, s, t);
+}
+
+private void recurDfs(int w, int t, boolean[] visited, int[] prev) {
+  if (found == true) return;
+  visited[w] = true;
+  if (w == t) {
+    found = true;
+    return;
+  }
+  for (int i = 0; i < adj[w].size(); ++i) {
+    int q = adj[w].get(i);
+    if (!visited[q]) {
+      prev[q] = w;
+      recurDfs(q, t, visited, prev);
+    }
+  }
+}
+```
+
 # 排序算法
 
 ## 稳定性
@@ -733,17 +883,130 @@ public int bsearch7(int[] a, int n, int value) {
 }
 ```
 
-## 哈希算法
+# 哈希算法
 
 将任意长度的二进制值串映射为固定长度的二进制值串。
 
-## 算法题目
+# 字符串匹配算法
 
-### 1000个无序的元素，最快的算法找出最大的10个元素
+## 单模式
+
+一个串跟一个串进行匹配。
+
+### BF算法（朴素匹配算法）
+
+![](images/string-brute-force-match.jpg)
+
+### RK算法
+
+BF算法的升级版。
+
+获取所有子串，计算哈希值，然后与模式串的哈希值进行比较，若哈希算法允许哈希冲突，则哈希值相同时，再进一步比较子串与模式串是否相等。
+
+### BM算法
+
+在模式串与主串匹配的过程中，当模式串和主串某个字符不匹配的时候，能够跳过一些肯定不会匹配的情况，将模式串往后多滑动几位。
+
+![](images/bm-match.jpg)
+
+```
+// a,b表示主串和模式串；n，m表示主串和模式串的长度。
+public int bm(char[] a, int n, char[] b, int m) {
+  int[] bc = new int[SIZE]; // 记录模式串中每个字符最后出现的位置
+  generateBC(b, m, bc); // 构建坏字符哈希表
+  int[] suffix = new int[m];
+  boolean[] prefix = new boolean[m];
+  generateGS(b, m, suffix, prefix);
+  int i = 0; // j表示主串与模式串匹配的第一个字符
+  while (i <= n - m) {
+    int j;
+    for (j = m - 1; j >= 0; --j) { // 模式串从后往前匹配
+      if (a[i+j] != b[j]) break; // 坏字符对应模式串中的下标是j
+    }
+    if (j < 0) {
+      return i; // 匹配成功，返回主串与模式串第一个匹配的字符的位置
+    }
+    int x = j - bc[(int)a[i+j]];
+    int y = 0;
+    if (j < m-1) { // 如果有好后缀的话
+      y = moveByGS(j, m, suffix, prefix);
+    }
+    i = i + Math.max(x, y);
+  }
+  return -1;
+}
+
+// j表示坏字符对应的模式串中的字符下标; m表示模式串长度
+private int moveByGS(int j, int m, int[] suffix, boolean[] prefix) {
+  int k = m - 1 - j; // 好后缀长度
+  if (suffix[k] != -1) return j - suffix[k] +1;
+  for (int r = j+2; r <= m-1; ++r) {
+    if (prefix[m-r] == true) {
+      return r;
+    }
+  }
+  return m;
+}
+
+private static final int SIZE = 256; // 全局变量或成员变量
+private void generateBC(char[] b, int m, int[] bc) {
+  for (int i = 0; i < SIZE; ++i) {
+    bc[i] = -1; // 初始化bc
+  }
+  for (int i = 0; i < m; ++i) {
+    int ascii = (int)b[i]; // 计算b[i]的ASCII值
+    bc[ascii] = i;
+  }
+}
+
+// b表示模式串，m表示长度，suffix，prefix数组事先申请好了
+private void generateGS(char[] b, int m, int[] suffix, boolean[] prefix) {
+  for (int i = 0; i < m; ++i) { // 初始化
+    suffix[i] = -1;
+    prefix[i] = false;
+  }
+  for (int i = 0; i < m - 1; ++i) { // b[0, i]
+    int j = i;
+    int k = 0; // 公共后缀子串长度
+    while (j >= 0 && b[j] == b[m-1-k]) { // 与b[0, m-1]求公共后缀子串
+      --j;
+      ++k;
+      suffix[k] = j+1; //j+1表示公共后缀子串在b[0, i]中的起始下标
+    }
+    if (j == -1) prefix[k] = true; //如果公共后缀子串也是模式串的前缀子串
+  }
+}
+```
+
+### KMP算法
+
+## 多模式
+
+在一个串中同时查找多个串。
+
+### Trie树
+
+![](images/trie-tree.jpg)
+
+根节点不包含任何信息。每个节点表示一个字符串中的字符，从根节点到红色节点的一条路径表示一个字符串（注意：红色节点并不都是叶子节点）。
+
+#### 应用
+
++ 搜索关键字下拉提示
+
+### AC自动机
+
+# 贪婪算法
+
+
+
+# 算法题目
+
+## 1000个无序的元素，最快的算法找出最大的10个元素
 
 堆排序 > 冒泡排序 > 快速排序
 
-### 循环递增数组，最快找出最小的元素
+## 循环递增数组，最快找出最小的元素
 
 二分查找法。
 
@@ -775,3 +1038,10 @@ public static  int findMin(int[] num, int begin, int end){
 		
 }
 ```
+
+## 假设有一个包含10亿个搜索关键词的日志文件，如何快速获取到Top 10最热门的搜索关键词呢？（单机，可以使用的内存为1GB）
+
++ 创建10个空文件，遍历这10亿个关键词，并且通过某个哈希算法对其求哈希值，然后哈希值对10取模，得到的结果就是这个搜索关键词应该被分到的文件编号。
++ 针对每个包含1亿条搜索关键词的文件，利用散列表和堆，分别求出Top 10。
++ 然后把这个10个Top 10放在一块，然后取这100个关键词中，出现次数最多的10个关键词。
+
