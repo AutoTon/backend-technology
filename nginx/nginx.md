@@ -136,3 +136,7 @@ error_page 404 =200 /empty.gif;
 error_page 403 http://example.com/forbidden.html;
 error_page 404 =301 http://example.com/notfound.html;
 ```
+
+# 极客时间--核心知识100讲
+
+[https://github.com/geektime-geekbang/geektime-nginx/](https://github.com/geektime-geekbang/geektime-nginx/)
