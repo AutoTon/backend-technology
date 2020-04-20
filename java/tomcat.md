@@ -46,3 +46,22 @@ fi
 %D   Time taken to process the request,in millis，请求消耗的时间，以毫秒记
 %T   Time taken to process the request,in seconds，请求消耗的时间，以秒记
 ```
+
+## 关闭没用端口
+
+### SHUTDOWN端口
+
+修改`conf/server.xml`文件，将关闭端口改成`-1`，更改之后不能使用`bin/shutdown.sh`关闭tomcat。
+
+```
+<Server port="-1" shutdown="SHUTDOWN">
+```
+
+### AJP端口
+
+修改`conf/server.xml`文件，将AJP端口那一行注释掉。
+
+```
+<!--    <Connector port="3409" protocol="AJP/1.3" redirectPort="8443" />
+-->
+```
