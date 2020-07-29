@@ -231,6 +231,20 @@ public class ReentrantLock {
 }
 ```
 
+#### 自旋锁
+
+##### 适用场景
+
+持有锁的线程能在很短时间内释放锁资源，那么那些等待竞争锁的线程就不需要做内核态和用户态之间的切换进入阻塞挂起状态，它们只需要等一等（自旋），等持有锁的线程释放锁后即可立即获取锁，这样就避免用户线程和内核的切换的消耗。
+
+##### 优点
+
+线程不阻塞，减少了线程上下文切换的性能消耗。
+
+##### 缺点
+
+一直在消耗CPU，所以需要设定一个自旋等待的最大时间。
+
 ##### 应用
 
 + synchronized
@@ -272,7 +286,7 @@ public class BlackListServiceImpl {
     private static CopyOnWriteMap<String, Boolean> blackListMap = new CopyOnWriteMap<String, Boolean>(1000);
 
     public static boolean isBlackList(String id) {
-        return blackListMap.get(id) == null ? false : true;
+        return blackListMap.get(id) != null;
     }
 
     public static void addBlackList(String id) {

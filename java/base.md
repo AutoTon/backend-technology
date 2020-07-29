@@ -35,9 +35,10 @@ Integer.MAX_VALUE
 
 ## String
 
-（1）为什么是final class？
+### 为什么是final class？
 
-很多字符串操作都会产生新的String对象，会带来一定的性能消耗
++ 性能：很多字符串操作都会产生新的String对象，会带来一定的性能消耗，JVM实现了字符串池，进而节省很多堆空间。
++ 线程安全
 
 ### 字符串拼接
 
@@ -210,6 +211,8 @@ JRE的超集，还包括了编译器和诊断工具，比如jstack、jmap等
 
 #### ConcurrentHashMap
 
+##### JDK1.7
+
 （1）线程安全
 
 采用"分段锁"，把一个大的Map拆分成n个小的segment，根据key.hashCode()确定存放到哪个segment（初始化后segment数量不可更改）。
@@ -220,11 +223,27 @@ Segment继承了ReenTrantLock，有一个属性HashEntry[]。
 
 除了第一个Segment之外，剩余的Segment采用的是延迟初始化的机制，后续元素在put方法里面初始化，采用的是自旋+CAS。
 
+##### JDK1.8
+
+（1）底层实现变化
+
++ 取消分段锁，底层使用Node<K,V>[]进行存储，对数组每一行的元素进行加锁。
++ 并发控制使用`synchronized`和`CAS`来操作。
+
+（2）put方法的处理逻辑
+
++ 如果没有初始化就先调用initTable()方法来进行初始化过程
++ 如果没有hash冲突就直接CAS插入
++ 如果还在进行扩容操作就先进行扩容
++ 如果存在hash冲突，就加锁来保证线程安全，这里有两种情况，一种是链表形式就直接遍历到尾端插入，一种是红黑树就按照红黑树结构插入
++ 如果该链表的数量大于阈值8，就要先转换成黑红树的结构，break再一次进入循环
++ 如果添加成功就调用addCount()方法统计size，并且检查是否需要扩容
+
 ### List
 
 #### Vector
 
-线程安全，数组实现。
+线程安全，相关方法加了synchronized，数组实现。
 
 #### ArrayList
 

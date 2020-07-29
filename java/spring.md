@@ -52,5 +52,95 @@ BeanFactory.setAllowCircularReferences(false);
 + PROPAGATION_NEVER：不能在事务中执行，若存在父事务，则会抛出异常。
 + PROPAGATION_NESTED：与PROPAGATION_REQUIRES_NEW区别在于子事务跟父事务是一起提交的。
 
+## 动态代理
 
+### JDK动态代理
 
++ 动态创建一个代理类，实现java.lang.reflect.InvocationHandler。
++ 代理类持有被代理的对象，在invoke方法中对被代理方法的前后加入额外的逻辑处理。
+
+```
+public class DynaProxyHello implements InvocationHandler{
+
+    private Object target;//目标对象
+    /**
+     * 通过反射来实例化目标对象
+     * @param object
+     * @return
+     */
+    public Object bind(Object object){
+        this.target = object;
+        return Proxy.newProxyInstance(this.target.getClass().getClassLoader(), this.target.getClass().getInterfaces(), this);
+    }
+
+    @Override
+    public Object invoke(Object proxy, Method method, Object[] args)
+            throws Throwable {
+        Object result = null;
+        Logger.start();//添加额外的方法
+        //通过反射机制来运行目标对象的方法
+        result = method.invoke(this.target, args);
+        Logger.end();
+        return result;
+    }
+
+}
+```
+
+### cglib动态代理
+
++ 动态创建一个代理类，为目标对象的子类；
++ 设置回调函数，在真实方法前后加上额外的逻辑。
+
+```
+public class CGLIBProxy {
+    //写法1
+    private Object targetObject;
+    private Object createProxy(Object obj){
+        targetObject = obj;
+        Enhancer enhancer = new Enhancer();
+        enhancer.setSuperclass(targetObject.getClass());//设置代理对象，父类，说明是继承，所有代理对象不能为final
+        enhancer.setCallback(new MyHandler());
+        return enhancer.create();//创建代理
+    }
+    class MyHandler implements MethodInterceptor{
+        @Override
+        public Object intercept(Object arg0, Method method, Object[] args,
+                MethodProxy arg3) throws Throwable {
+            System.out.println("开启事务..");  
+            Object returnValue = method.invoke(targetObject, args);  
+            System.out.println("提交事务....");  
+            return returnValue;  
+        }
+    }
+    @Test
+    public  void test1() {  
+        CGLIBProxy cglibProxy = new CGLIBProxy();  
+        Customer customer = (Customer)cglibProxy.createProxy(new Customer());  
+        customer.eat();  
+    }  
+    //写法2
+    @Test
+    public void test2(){
+        Customer customer = new Customer();
+        Enhancer enhancer = new Enhancer();
+        enhancer.setSuperclass(customer.getClass());
+        enhancer.setCallback(new MethodInterceptor() {
+            @Override
+            public Object intercept(Object proxy, Method method, Object[] args,
+                    MethodProxy arg3) throws Throwable {
+                if(method.getName().equals("eat")){  
+                    System.out.println("customer的eat方法被拦截了。。。。");  
+                    Object invoke = method.invoke(proxy, args);  
+                    System.out.println("真实方法拦截之后。。。。");  
+                    return invoke;  
+                }  
+                // 不拦截 
+                return method.invoke(proxy, args);  
+            }
+        });
+        Customer cus = (Customer) enhancer.create();
+        cus.eat();
+    }
+}
+```
