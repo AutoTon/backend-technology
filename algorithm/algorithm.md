@@ -587,24 +587,24 @@ private static void quickSort(int[] array, int left, int right) {
     if (left >= right) {
         return;
     }
-    int i = left + 1;
+    int i = left;
     int j = right;
     int pivot = left;
     while (i < j) {
-        while (i < j && array[pivot] > array[i]) {
-            i++;
-        }
-        while (i < j && array[pivot] < array[j]) {
+        while (i < j && array[pivot] <= array[j]) {
             j--;
+        }
+        while (i < j && array[pivot] >= array[i]) {
+            i++;
         }
         if (i >= j) {
             break;
         }
         swap(array, i, j);
     }
-    swap(array, j - 1, pivot);
-    quickSort(array, left, i - 1);
-    quickSort(array, i + 1, right);
+    swap(array, i, pivot);
+    quickSort(array, left, j - 1);
+    quickSort(array, j + 1, right);
 }
 ```
 
