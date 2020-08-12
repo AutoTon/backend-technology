@@ -120,6 +120,14 @@ jmap -histo:live <pid>
 jmap -dump:format=b,file=<dump-file> <pid>
 ```
 
+### jcmd
+
+需要先开启`NativeMemoryTracking`，开启之后有5-10%的性能损失。
+
+```
+-XX:NativeMemoryTracking=detail
+```
+
 # 性能调优实战
 
 ## 场景：使用-XX:SurvivorRatio=8不生效
