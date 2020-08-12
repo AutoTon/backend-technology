@@ -70,9 +70,9 @@ A、B相互依赖，初始化过程：
 
 ## 动态代理
 
-### JDK动态代理
+### JDK动态代理（针对接口）
 
-+ 动态创建一个代理类，实现java.lang.reflect.InvocationHandler。
++ 动态创建一个代理类，继承Proxy，实现java.lang.reflect.InvocationHandler。
 + 代理类持有被代理的对象，在invoke方法中对被代理方法的前后加入额外的逻辑处理。
 
 ```
@@ -103,7 +103,7 @@ public class DynaProxyHello implements InvocationHandler{
 }
 ```
 
-### cglib动态代理
+### cglib动态代理（针对类）
 
 + 动态创建一个代理类，为目标对象的子类；
 + 设置回调函数，在真实方法前后加上额外的逻辑。

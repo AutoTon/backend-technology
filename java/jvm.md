@@ -8,6 +8,11 @@
 + 堆区：所有线程共享。
 + 方法区：所有线程共享，存放了要加载的类的信息（如类名、修饰符等）、静态变量、构造函数、final定义的常量、类中的字段和方法等信息，以及常量池。
 
+## 内存空间
+
++ jvm堆大小 = 新生代（Eden + 2Survivor） + 老年代
++ MetaSpace 包含 CompressedClassSpace
+
 ## 垃圾回收机制
 
 ### 可回收的内存
@@ -88,6 +93,21 @@ Parallel Scavenge收集器的老年代版本，使用多线程和标记-整理�
 jstat -gcutil -h 20 <pid> 1000
 ```
 
+```
+jstat -gc <pid> 250 4
+```
+
+![](images/jstat-example01.png)
+
++ S0C、S1C、S0U、S1U：Survivor 0/1区容量（Capacity）和使用量（Used）
++ EC、EU：Eden区容量和使用量
++ OC、OU：年老代容量和使用量
++ MC、PU：MetaSpace容量和使用量
++ CCSC、CCSU：CompressedClassSpace容器和使用量
++ YGC、YGT：年轻代GC次数和GC耗时
++ FGC、FGCT：Full GC次数和Full GC耗时
++ GCT：GC总耗时
+
 ### 获取jvm当前存活对象信息
 
 ```
@@ -99,3 +119,47 @@ jmap -histo:live <pid>
 ```
 jmap -dump:format=b,file=<dump-file> <pid>
 ```
+
+# 性能调优实战
+
+## 场景：使用-XX:SurvivorRatio=8不生效
+
+![](images/jvm-adjust01.png)
+
+答：在HotSpot VM里，ParallelScavenge系的GC（UseParallelGC / UseParallelOldGC）默认开启-XX:+UseAdaptiveSizePolicy， 这个配置会在每次Minor GC之后对From和To区进行自适应分配大小，而SurvivorRatio使用默认值8，设置成任何非8的数值都会无效。
+
+解决办法：加上`-XX:-UseAdaptiveSizePolicy`。
+
+![](images/jvm-adjust02.png)
+
+## 场景：排查占用CPU/内存较多的线程
+
+（1）打印进程中的线程
+
+```
+ps p <pid> -L -o pcpu,pmem,pid,tid,time,tname,cmd
+```
+
+![](images/jvm-adjust03.png)
+
+（2）将线程ID转化为十六进制
+
+```
+printf "%x\n" <tid>
+```
+
+![](images/jvm-adjust04.png)
+
+（3）打印jvm内线程信息
+
+```
+jstack -l <pid> > jstack.log
+```
+
+（4）根据jstack结果找到对应线程
+
+```
+cat jstack.log | grep <线程ID的十六进制>
+```
+
+![](images/jvm-adjust05.png)
