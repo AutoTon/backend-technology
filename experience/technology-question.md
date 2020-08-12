@@ -2,6 +2,8 @@
 
 ## java
 
+### ArrayList与LinkedList的区别
+
 ### HashMap1.7跟1.8区别
 
 ### HashMap链表与红黑树是如何转换的
@@ -17,6 +19,8 @@
 ### jvm排查思路及常用命令
 
 ### jvm内存模型
+
+### jvm中的新生代与老年代
 
 ### jvm的垃圾回收算法
 
@@ -62,6 +66,8 @@
 
 ## 数据库
 
+### MyIsam与InnoDb的区别
+
 ### mysql事务的实现原理
 
 ### b+树的优点
@@ -79,3 +85,17 @@
 ### http的keepalive参数
 
 ### tcp的keepalive与滑动窗口
+
+### tcp为什么需要四次挥手
+
+### tcp连接中出现大量TIME_WAIT的原因
+
+### tcp与udp的区别
+
+### tcp三次握手、四次松手的过程
+
+## Linux
+
+### 进程与线程的区别
+
+### 内存管理模型
