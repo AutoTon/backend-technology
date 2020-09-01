@@ -343,3 +343,143 @@ int compare(int a[N]){
  return sum;
 }
 ```
+
+## 合并多个有序数组为一个有序数组，并计算其时间复杂度
+
+### 堆排序思想
+
++ 1. 创建一个大小为n的数组保存最后的结果
++ 2. 创建一个大小为k的最小堆，堆中元素为k个数组中的每个数组的第一个元素
++ 3. 重复下列步骤n次：
+（1）每次从堆中取出最小元素（堆顶元素），并将其存入输出数组中
+（2）用堆顶元素所在数组的下一元素将堆顶元素替换掉，
+（3）如果数组中元素被取光了，将堆顶元素替换为无穷大。每次替换堆顶元素后，重新调整堆
+
+时间复杂度计算：每次调整最小堆的时间为logk，总共调整约n次，因此时间复杂度为nlogk。
+
+```
+import java.util.PriorityQueue;
+import java.util.Arrays;
+import java.util.Comparator;
+
+public class SortedArraysMerge {
+    static class Node {
+        int value;
+        int idx;
+
+        public Node(int value, int idx) {
+            this.value = value;
+            this.idx = idx;
+        }
+    }
+
+    public static int[] MergeArrays(int[][] arr) {
+        int N = arr.length, L;
+        if (N == 0)//此时传入数组为空
+            return new int[0];
+        else {//判断数组是否符合规范
+            L = arr[0].length;
+            for (int i = 1; i < N; i++)
+                if (arr[i].length != L)
+                    return new int[0]; //此时数组不规范
+        }
+        int[] result = new int[N * L];
+        int[] index = new int[N];
+        Arrays.fill(index, 0, N, 0);
+        PriorityQueue<Node> queue = new PriorityQueue<Node>(new Comparator<Node>() {
+            @Override
+            public int compare(Node n1, Node n2) {
+                if (n1.value < n2.value)
+                    return -1;
+                else if (n1.value > n2.value)
+                    return 1;
+                else
+                    return 0;
+            }
+        });
+        for (int i = 0; i < N; i++) {
+            Node node = new Node(arr[i][index[i]++], i);
+            queue.offer(node);
+        }
+        System.out.println("" + queue.size());
+        int idx = 0;
+        while (idx < N * L) {
+            Node minNode = queue.poll();
+            result[idx++] = minNode.value;
+            if (index[minNode.idx] < L) {
+                queue.offer(new Node(arr[minNode.idx][index[minNode.idx]], minNode.idx));
+                index[minNode.idx]++;
+            }
+        }
+        return result;
+    }
+}
+```
+
+### 归并排序思想
+
+二叉树的高度为logk（2^height=k），每层的合并次数为2*(n/k)*(k/2)=n次，因此时间复杂度为nlogk。
+
+## Find Peak Element（LeetCode）
+
+```
+A peak element is an element that is greater than its neighbors.
+
+Given an input array nums, where nums[i] ≠ nums[i+1], find a peak element and return its index.
+
+The array may contain multiple peaks, in that case return the index to any one of the peaks is fine.
+
+You may imagine that nums[-1] = nums[n] = -∞.
+```
+
+> 该题目中，要查找的峰值一定存在。
+
+### 线性遍历
+
+```
+public class Solution {
+    public int findPeakElement(int[] nums) {
+        for (int i = 0; i < nums.length - 1; i++) {
+            if (nums[i] > nums[i + 1])
+                return i;
+        }
+        return nums.length - 1;
+    }
+}
+```
+
+### 二分查找（递归法）
+
+```
+public class Solution {
+    public int findPeakElement(int[] nums) {
+        return search(nums, 0, nums.length - 1);
+    }
+    public int search(int[] nums, int l, int r) {
+        if (l == r)
+            return l;
+        int mid = (l + r) / 2;
+        if (nums[mid] > nums[mid + 1])
+            return search(nums, l, mid);
+        return search(nums, mid + 1, r);
+    }
+}
+```
+
+### 二分查找（迭代法）
+
+```
+public class Solution {
+    public int findPeakElement(int[] nums) {
+        int l = 0, r = nums.length - 1;
+        while (l < r) {
+            int mid = (l + r) / 2;
+            if (nums[mid] > nums[mid + 1])
+                r = mid;
+            else
+                l = mid + 1;
+        }
+        return l;
+    }
+}
+```

@@ -887,6 +887,39 @@ public int bsearch7(int[] a, int n, int value) {
 }
 ```
 
+# 时间复杂度计算
+
+## 平方阶
+
+```
+public class TS {
+	public static void main(String[] args) {
+		int sum = 0;
+		for(int i=1;i<=100;i++) {
+			for(int j=i;j<=100;j++)
+				sum = sum + i;
+		}
+	}
+}
+```
+
+当i=1时，内循环执行n次；当i=n-1时，内循环执行1次，依次推导，总执行次数为n+(n-1)+……+2+1=O(n^2)。
+
+## 对数阶
+
+```
+public class TS {
+	public static void main(String[] args) {
+		int i=1;
+		int n= 100;
+		while(i<n) {
+			i = i*2;
+		}	
+}
+```
+
+2^x = n,所以时间复杂度为O(log2n)。
+
 # 哈希算法
 
 将任意长度的二进制值串映射为固定长度的二进制值串。
