@@ -1,5 +1,9 @@
 # http
 
+## 格式
+
+![](images/http-format.png)
+
 ## 浏览器缓存
 
 ### 强缓存
@@ -248,4 +252,10 @@ TCP还设有一个保活计时器，显然，客户端如果出现故障，服�
 ### keepalive
 
 http1.1默认打开keepalive参数。打开keepalive在很多情况下能够重用连接，减少资源消耗，缩短响应时间。
+
+# 浏览器发起HTTP请求的流程
+
+![](images/brower-assess-flow.png)
+
+
 
