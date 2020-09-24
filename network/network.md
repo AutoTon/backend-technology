@@ -4,6 +4,111 @@
 
 ![](images/http-format.png)
 
++ SP：空格
++ CRLF：换行
+
+## URI
+
++ URL：Uniform Resource Locator，表示资源的位置，期望提供查找资源的方法。
++ URN：Uniform Resource Name，期望为资源提供持久的、位置无关的标识方式，例如磁力链接：magnet:?xt=urn:sha1:YNCKHTQC5C。
++ URI：Uniform Resource Identifier，用于区分资源，是URL和URN的超集。
+
+### 组成
+
+![](images/uri-components.png)
+
+### 格式
+
+![](images/uri-format-1.png)
+![](images/uri-format-2.png)
+
+### 方法
+
+#### GET
+
+不能改变服务器上任何RestFul资源的状态。
+
+#### PUT
+
+保存数据，必须保证幂等。意思是同样的请求数据，无论请求多少次，服务器上资源的最终状态都为一致。
+
+#### DELETE
+
+删除数据，必须保证幂等。
+
+#### POST
+
+适用于诸多场景。允许不保证幂等。
+
+#### HEAD
+
+类似GET方法，但服务器不发送BODY，用以获取HEAAD元数据。
+
+#### OPTIONS
+
+显示服务器对访问资源支持的方法，浏览器跨域时使用。
+
+#### CONNECT
+
+建立tunnel隧道。
+
+### 响应码
+
+#### 1xx
+
+请求已接收到，需要进一步处理才能完成，HTTP1.0 不支持。
+
++ 100 Continue：上传大文件前使用，由客户端发起请求中携带`Expect: 100-continue`头部触发。
++ 101 Switch Protocols：协议升级使用，由客户端发起请求中携带`Upgrade:`头部触发，如升级websocket或者http/2.0。
+
+#### 2xx
+
+成功处理请求。
+
++ 200 OK：成功返回响应。
++ 201 Created：有新资源在服务器端被成功创建。
++ 202 Accepted：服务器接收并开始处理请求，但请求未处理完成。例如异步任务的场景。
++ 206 Partial Content：使用range协议时返回部分响应内容时的响应码。
+
+#### 3xx
+
+重定向使用Location指向的资源或者缓存中的资源。规范规定客户端重定向次数不应超过5次，以防止死循环。
+
++ 301 Moved Permanently：资源永久性的重定向到另一个URI。
++ 302 Found：资源临时的重定向到另一个URI。
++ 304 Not Modified：当客户端拥有可能过期的缓存时，会携带缓存的标识etag、时间等询问服务器，客户端的缓存是否仍可复用，而304是告诉客户端可以。
++ 307 Temporary Redirect：类似302，但method必须相同。
++ 308 Permanent Redirect：类似301，但method必须相同。
+
+#### 4xx
+
+客户端出现错误。
+
++ 400 Bad Request：服务器认为客户端出现了错误，但不能明确判断为那种错误。例如http请求格式错误、json格式错误。
++ 401 Unauthorized：用户认证信息缺失或者不正确。
++ 403 Forbidden：没有权限。
++ 404 Not Found：服务器未找到对应的资源。
++ 405 Method Not Allowed：不支持请求行中的method。
++ 408 Request Timeout：服务器接收请求超时。
++ 411 Length Required：若请求含有body且未携带`Content-Length`头部，且不属于chunk类请求时。
++ 413 Payload Too Large/Request Entity Too Large：请求的body超出服务器能处理的最大长度。
++ 414 URI Too Long：请求的URI超出服务器能接受的最大长度
++ 415 Unsuppprted Media Type：上传的文件类型不被服务器支持。
++ 416 Range Not satisfiable：无法提供Range请求中指定的那段body
++ 417 Expectation Failed：对于Expect请求头部期待的情况无法满足。
++ 426 Upgrade Required：服务器拒绝基于当前http协议提供服务，客户端必须升级协议。
++ 429 Too Many Requests：客户端发送请求的速率过快。
++ 431 Request Header Fields Too Large：请求的header头部大小超过限制。
+
+#### 5xx
+
+服务器端出现错误。
+
++ 500 Internal Server Error：服务器内部错误。
++ 502 Bad Gateway：代理服务器无法获取到合法响应。
++ 503 Service Unavailable：服务器资源尚未准备好处理当前请求，比如连接过多。
++ 504 Gateway Timeout：代理服务器无法及时从上游获取响应。
+
 ## 浏览器缓存
 
 ### 强缓存
@@ -45,24 +150,6 @@ http状态码为304（Not Modified）
 
 + ctrl+F5：跳过强缓存和协商缓存
 + F5：只跳过强缓存
-
-## Restful API规范
-
-### GET
-
-不能改变服务器上任何RestFul资源的状态。
-
-### PUT
-
-保存数据，必须保证幂等。意思是同样的请求数据，无论请求多少次，服务器上资源的最终状态都为一致。
-
-### DELETE
-
-删除数据，必须保证幂等。
-
-### POST
-
-适用于诸多场景。允许不保证幂等。
 
 # 网络分层模型
 
