@@ -123,6 +123,12 @@ echo 'MAVEN_HOME='$maven_dir'/apache-maven-3.3.9
 export PATH=$PATH:$MAVEN_HOME/bin' | sudo tee -a /etc/profile
 ```
 
+### 4.7 多个压缩文件查找字符串
+
+```
+zgrep '/serverops/servermove/batchAlloRes' *.log.gz | grep ERROR
+```
+
 ## 5 压缩与解压
 
 ### 5.1 tar
