@@ -19,6 +19,12 @@ df -hl
 ll /proc/<pid>/exe
 ```
 
+### 1.4 根据进程ID查询执行文件目录
+
+```
+sudo ls -lr /proc/{pid} | grep cwd
+```
+
 ## 2. 内存相关
 
 ### 2.1 查看内存使用情况
