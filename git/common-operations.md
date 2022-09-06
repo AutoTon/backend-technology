@@ -171,3 +171,12 @@ git config credential.helper 'cache --timeout=3600'
 ```
 git credential-manager delete
 ```
+
+## 6. 合并请求
+
+### 6.1 创建合并请求
+
+```
+# gitlab特有，参见https://docs.gitlab.com/ee/user/project/push_options.html
+git push origin HEAD  -o merge_request.create -o merge_request.target=master -o merge_request.remove_source_branch
+```
