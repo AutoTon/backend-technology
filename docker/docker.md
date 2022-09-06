@@ -208,6 +208,8 @@ systemctl enable docker # 开机自动启动docker
 
 安装后启动`Docker Quickstart Terminal`，可能需要去下载最新的[boot2docker](https://github.com/boot2docker/boot2docker/releases)，下载成功之后，将iso文件复制到`C:\Users\jirt\.docker\machine\cache`，然后再重新启动`Docker Quickstart Terminal`。
 
+> 默认登录账号密码：docker/tcuser。
+
 #### 设置HTTP访问镜像仓库
 
 通过shell登录到docker虚机，编辑docker配置文件
